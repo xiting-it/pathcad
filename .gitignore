@@ -1,0 +1,55 @@
+# ── Python ──────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ── 打包产物 ────────────────────────────
+# exe 不进仓库，通过 Release 附件发布
+dist/
+build/
+*.spec
+build_icon.ico
+
+# ── 运行时 / 日志 ───────────────────────
+*.log
+server.log
+exe_test.log
+
+# ── 开发期临时产物 ──────────────────────
+# 视频抽帧、PDF 渲染页、验证截图、一次性脚本
+_vid/
+_vid15/
+_tmp_pages/
+_tmp_svg/
+_tmp_mesh/
+_shots/
+_research/
+_tmp_*.py
+_verify*.py
+_shot*.py
+_manual_shots.py
+_meshtest.py
+_svgtest.py
+selftest.py
+_proto.txt
+
+# ── 记忆库（本地数据，不共享）────────────
+.dsh-meow/
+
+# ── 编辑器 / 系统 ───────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini

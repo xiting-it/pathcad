@@ -1,9 +1,9 @@
-"""pathCAM 打包脚本。
+"""CAM-B 打包脚本。
 
 用法：
     python build.py
 
-产物：dist/pathCAM.exe（单文件，双击即用）
+产物：dist/CAM-B-<版本>-dist.exe（单文件，双击即用）
 """
 
 from __future__ import annotations
@@ -17,12 +17,39 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
-SPEC = ROOT / "pathCAM.spec"
+SPEC = ROOT / "CAM-B.spec"
 
-NAME = "pathCAM"
+NAME = "CAM-B"            # PyInstaller 内部名（进程名）
+
+try:
+    from app.version import APP_NAME, DIST_NAME, PROCESS_NAME, VERSION
+except Exception:                      # 打包环境里也能跑
+    APP_NAME = "CAM-B"
+    VERSION = "dev"
+    DIST_NAME = "CAM-B-dev-dist"
+    PROCESS_NAME = "CAM-B"
+
+
+def _kill_running() -> None:
+    """杀掉正在跑的实例（产物名带版本号，用通配匹配）。"""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-Process | Where-Object {$_.Name -like '*CAM-B*'} | "
+             "Select-Object -ExpandProperty Id"],
+            capture_output=True, text=True, timeout=15,
+        )
+        for pid in (out.stdout or "").split():
+            if pid.strip().isdigit():
+                subprocess.run(["taskkill", "/F", "/PID", pid.strip()],
+                               capture_output=True, timeout=10)
+                print(f"  已结束旧进程 PID {pid.strip()}")
+    except Exception as e:
+        print(f"  [警告] 检查旧进程失败：{e}")
 
 
 def clean():
+    _kill_running()
     for d in (DIST, BUILD):
         if d.exists():
             print(f"清理 {d.name}/")
@@ -98,13 +125,20 @@ def build():
         return r.returncode
 
     exe = DIST / f"{NAME}.exe"
-    if exe.exists():
-        mb = exe.stat().st_size / 1024 / 1024
-        print(f"\n[OK] 打包完成：{exe}")
-        print(f"     大小 {mb:.1f} MB")
-        print("\n把这个文件拷给别人，双击即可运行。")
-    else:
+    if not exe.exists():
         print("\n[警告] 没找到产物")
+        return 1
+
+    # 重命名成带版本号的交付名：CAM-B-1.4.0-beta.1-dist.exe
+    final = DIST / f"{DIST_NAME}.exe"
+    if final.exists():
+        final.unlink()
+    exe.rename(final)
+
+    mb = final.stat().st_size / 1024 / 1024
+    print(f"\n[OK] 打包完成：{final}")
+    print(f"     版本 {VERSION}    大小 {mb:.1f} MB")
+    print("\n把这个文件拷给别人，双击即可运行。")
     return 0
 
 

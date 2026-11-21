@@ -3,6 +3,9 @@
 和"扫描线填满"不同，格栅只在内部织一组互相垂直的筋，
 中间留空——这就是视频里那台机器打的薄壁多孔结构。
 
+核心扫描线算法移植自激光切割的 CIMFillAlgorithm（见 app/fill_scan.py），
+比原来的 Shapely 版本更可控：边界处理、孔洞奇偶规则、零长段消解都是显式的。
+
 关键约束（DIW 场景）：
 - 每条筋是**独立笔画**，各自开场关阀。绝不能连成蛇形，
   否则连接段会带着阀门开着走，在空白处挤出材料。
@@ -13,37 +16,27 @@ from __future__ import annotations
 
 import math
 
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import Polygon
 from shapely.ops import unary_union
+
+from .fill_scan import fill_scan
 
 from .geometry import _polygon_of
 
 
-def _lines_in_polygon(poly, axis: str, step: float, offset: float) -> list[list[tuple[float, float]]]:
-    """在 poly 内部按固定间隔切一组平行线段。axis='h' 水平，'v' 垂直。"""
-    minx, miny, maxx, maxy = poly.bounds
-    lo, hi = (minx, maxx) if axis == "h" else (miny, maxy)
-    lo_fixed = miny if axis == "h" else minx
-    hi_fixed = maxy if axis == "h" else minx
+def _contours_of(poly) -> list[list[tuple[float, float]]]:
+    """把 Shapely 多边形（含内洞）拆成轮廓点串列表。
 
-    # 从下限开始按 step 排，加个 offset 让两条方向的筋错开
-    start = lo + step / 2 + offset
+    内洞单独作为一条闭合串传进去，扫描线算法用奇偶规则处理孔洞。
+    """
     out: list[list[tuple[float, float]]] = []
-    pos = start
-    guard = 0
-    while pos <= hi and guard < 5000:
-        guard += 1
-        if axis == "h":
-            seg = LineString([(minx - 1, pos), (maxx + 1, pos)])
-        else:
-            seg = LineString([(pos, miny - 1), (pos, maxy + 1)])
-        clipped = seg.intersection(poly)
-        if not clipped.is_empty:
-            parts = [clipped] if clipped.geom_type == "LineString" else list(getattr(clipped, "geoms", []))
-            for p in parts:
-                if p.geom_type == "LineString" and p.length > 1e-6:
-                    out.append([(c[0], c[1]) for c in p.coords])
-        pos += step
+    geoms = [poly] if poly.geom_type == "Polygon" else list(getattr(poly, "geoms", []))
+    for g in geoms:
+        if g.geom_type != "Polygon":
+            continue
+        out.append([(c[0], c[1]) for c in g.exterior.coords])
+        for r in g.interiors:
+            out.append([(c[0], c[1]) for c in r.coords])
     return out
 
 
@@ -58,7 +51,7 @@ def fill_grid(
     """格栅填充。
 
     参数：
-      spacing  格栅间距（两个方向上都是）
+      spacing  格栅间距（两个方向上都是），含义是「孔的大小」不是线宽
       inset    格栅离外轮廓的距离（外框由 outline 单独生成）
       min_len  太短的筋丢弃（无 look-ahead 时短段跑不满速度）
       stagger  两条方向的筋错开半个间距，孔洞更均匀
@@ -85,28 +78,18 @@ def fill_grid(
     if inner.is_empty:
         return result
 
-    # 内缩后可能是 MultiPolygon，取最大的那块
-    if inner.geom_type != "Polygon":
-        geoms = [g for g in getattr(inner, "geoms", []) if g.geom_type == "Polygon"]
-        if not geoms:
-            return result
-        inner = max(geoms, key=lambda g: g.area)
+    contours = _contours_of(inner)
+    if not contours:
+        return result
 
-    # 3. 两个方向各切一组
+    # 3. 两个方向各扫一遍，得到互相垂直的筋
     off = spacing / 2 if stagger else 0.0
-    hs = _lines_in_polygon(inner, "h", spacing, 0.0)
-    vs = _lines_in_polygon(inner, "v", spacing, off)
+    hs = fill_scan(contours, spacing, angle_deg=0.0, offset=0.0, min_len=min_len)
+    vs = fill_scan(contours, spacing, angle_deg=90.0, offset=off, min_len=min_len)
 
-    # 4. 过滤太短的
-    for ln in hs + vs:
-        if len(ln) < 2:
-            continue
-        length = sum(
-            math.dist(ln[i], ln[i + 1]) for i in range(len(ln) - 1)
-        )
-        if length < min_len:
-            continue
-        result.append(ln)
+    # 4. 每条线段单独成为一条笔画（绝不合并成蛇形）
+    for a, b in hs + vs:
+        result.append([a, b])
 
     return result
 

@@ -71,8 +71,36 @@ def discretize_bezier(
     return out
 
 
+def _apply_rotation(pts: list[tuple[float, float]], src: Source) -> list[tuple[float, float]]:
+    """按 src.rotation 绕中心旋转点序列。没设角度就原样返回。"""
+    ang = src.rotation or 0.0
+    if abs(ang) < 1e-9 or not pts:
+        return pts
+    # 中心：优先用显式给的，否则用包围盒中心
+    if src.rot_cx is not None and src.rot_cy is not None:
+        cx, cy = src.rot_cx, src.rot_cy
+    else:
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    a = math.radians(ang)
+    ca, sa = math.cos(a), math.sin(a)
+    return [
+        ((x - cx) * ca - (y - cy) * sa + cx,
+         (x - cx) * sa + (y - cy) * ca + cy)
+        for x, y in pts
+    ]
+
+
 def discretize_source(src: Source) -> list[tuple[float, float]]:
-    """把一个图元变成点序列。闭合图元首尾点重复。"""
+    """把一个图元变成点序列。闭合图元首尾点重复。
+
+    所有类型都支持 src.rotation（绕中心旋转，度）。
+    """
+    return _apply_rotation(_discretize_base(src), src)
+
+
+def _discretize_base(src: Source) -> list[tuple[float, float]]:
     tol = src.tolerance or 0.05
     if src.type == "rect":
         x, y = src.x or 0.0, src.y or 0.0
@@ -81,6 +109,48 @@ def discretize_source(src: Source) -> list[tuple[float, float]]:
     if src.type == "circle":
         pts = discretize_circle(src.cx or 0.0, src.cy or 0.0, src.r or 0.0, tol)
         return pts + [pts[0]] if pts else []
+    if src.type == "ellipse":
+        cx, cy = src.cx or 0.0, src.cy or 0.0
+        rx, ry = src.rx or 0.0, src.ry or 0.0
+        if rx <= 0 or ry <= 0:
+            return []
+        n = max(36, min(720, int(2 * math.pi * max(rx, ry) / max(tol, 1e-3))))
+        pts = [
+            (cx + rx * math.cos(2 * math.pi * i / n), cy + ry * math.sin(2 * math.pi * i / n))
+            for i in range(n)
+        ]
+        return pts + [pts[0]]
+    if src.type == "polygon":
+        cx, cy = src.cx or 0.0, src.cy or 0.0
+        r = src.r or 0.0
+        sides = max(3, int(src.sides or 6))
+        if r <= 0:
+            return []
+        pts = [
+            (cx + r * math.cos(-math.pi / 2 + 2 * math.pi * i / sides),
+             cy + r * math.sin(-math.pi / 2 + 2 * math.pi * i / sides))
+            for i in range(sides)
+        ]
+        return pts + [pts[0]]
+    if src.type == "diamond":
+        cx, cy = src.cx or 0.0, src.cy or 0.0
+        rx, ry = src.rx or 0.0, src.ry or 0.0
+        if rx <= 0 or ry <= 0:
+            return []
+        return [(cx, cy - ry), (cx + rx, cy), (cx, cy + ry), (cx - rx, cy), (cx, cy - ry)]
+    if src.type == "star":
+        cx, cy = src.cx or 0.0, src.cy or 0.0
+        r = src.r or 0.0
+        inner = src.inner or (r * 0.45)
+        points = max(3, int(src.points or 5))
+        if r <= 0:
+            return []
+        pts = []
+        for i in range(points * 2):
+            a = -math.pi / 2 + math.pi * i / points
+            rad = r if i % 2 == 0 else inner
+            pts.append((cx + rad * math.cos(a), cy + rad * math.sin(a)))
+        return pts + [pts[0]]
     if src.type in ("polyline", "svg"):
         pts = [(p.x, p.y) for p in (src.pts or [])]
         return pts

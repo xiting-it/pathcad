@@ -31,20 +31,34 @@ class Source(BaseModel):
     """图元的原始描述。存它是为了支持增量编辑——
     用户改矩形宽度时只重算那一个图元，不用重新生成整段点。"""
 
-    type: Literal["polyline", "rect", "circle", "bezier", "svg", "image"]
+    type: Literal["polyline", "rect", "circle", "bezier", "svg", "image",
+                  "ellipse", "polygon", "diamond", "star"]
     # rect
     x: float | None = None
     y: float | None = None
     w: float | None = None
     h: float | None = None
-    # circle
+    # circle / polygon / star
     cx: float | None = None
     cy: float | None = None
     r: float | None = None
+    # ellipse / diamond（两个半轴）
+    rx: float | None = None
+    ry: float | None = None
+    # polygon（边数）/ star（角数）
+    sides: int | None = None
+    points: int | None = None
+    # star 内半径
+    inner: float | None = None
     # bezier / polyline / svg
     pts: list[Point] | None = None
     # 离散精度（弦高误差 mm）
     tolerance: float | None = None
+    # 旋转角度（度，逆时针为正）。绕 rot_cx/rot_cy 旋转，
+    # 未指定中心时用图元自身包围盒中心。
+    rotation: float | None = None
+    rot_cx: float | None = None
+    rot_cy: float | None = None
 
 
 class Stroke(BaseModel):
@@ -115,7 +129,16 @@ class CalibrationProfile(BaseModel):
 
 
 class Project(BaseModel):
+    """工程文件。
+
+    app / app_version 是产品来源标识：
+      · 新文件写 "cam-b" + 当前版本
+      · 旧文件（pathCAM 时代）没有这两个字段，读取时按 None 处理并自动迁移
+    """
+
     version: int = 1
+    app: str | None = None            # "cam-b"；None 表示旧工程
+    app_version: str | None = None
     name: str = "untitled"
     machine: Machine = Field(default_factory=Machine)
     process: Process = Field(default_factory=Process)
@@ -124,16 +147,31 @@ class Project(BaseModel):
 
 
 class DialectCaps(BaseModel):
-    """方言能力声明。queuedIO 决定后处理器要不要插 M400。"""
+    """方言能力声明。
+
+    queued_io 决定后处理器要不要插 M400；
+    dwell 决定延时在哪实现：
+
+      "gcode" 板子支持 G4 → 延时写进 G-code，下发器不用管
+      "host"  板子不支持 G4 → 编译器不写 G4，改输出 delays[] 元数据，
+              下发器在「等 E000 之后」按它 sleep
+      "none"  板子既不会 G4 也不该 sleep（纯运动板）→ 延时直接丢弃
+    """
 
     queued_io: bool
     arcs: bool
     max_line_len: int
     dwell_unit: Literal["ms", "s"]
+    dwell: Literal["gcode", "host", "none"] = "gcode"
 
 
 DIALECTS: dict[str, DialectCaps] = {
-    "lc": DialectCaps(queued_io=False, arcs=False, max_line_len=128, dwell_unit="ms"),
-    "marlin": DialectCaps(queued_io=False, arcs=True, max_line_len=96, dwell_unit="ms"),
-    "klipper": DialectCaps(queued_io=True, arcs=True, max_line_len=0, dwell_unit="ms"),
+    "lc": DialectCaps(queued_io=True, arcs=False, max_line_len=128, dwell_unit="ms",
+                      dwell="host"),
+    "marlin": DialectCaps(queued_io=False, arcs=True, max_line_len=96, dwell_unit="ms",
+                          dwell="gcode"),
+    "klipper": DialectCaps(queued_io=True, arcs=True, max_line_len=0, dwell_unit="ms",
+                           dwell="gcode"),
+    "f1": DialectCaps(queued_io=True, arcs=False, max_line_len=89, dwell_unit="ms",
+                      dwell="none"),
 }

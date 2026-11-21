@@ -3,47 +3,186 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>pathCAM · 3D 路径规划</title>
+<title>CAM-B · 路径工艺平台</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-<!-- ══════════ 顶栏 ══════════ -->
-<header class="topbar">
-  <div class="brand">pathCAM</div>
-  <div class="sep"></div>
+<!-- ══════════ 菜单栏（Word/WPS 风格） ══════════ -->
+<div class="menubar">
+  <div class="brand">CAM-B</div>
 
-  <button id="btnSample" class="ghost sm">示例</button>
+  <div class="menu" data-menu="file">
+    <button class="menuTitle">文件</button>
+    <div class="menuDrop">
+      <button data-act="new">新建<span class="kbd">Ctrl+N</span></button>
+      <button data-act="sample">载入示例</button>
+      <div class="menuSep"></div>
+      <button data-act="load">打开工程…<span class="kbd">Ctrl+O</span></button>
+      <button data-act="save">保存工程<span class="kbd">Ctrl+S</span></button>
+      <div class="menuSep"></div>
+      <button data-act="svg">导入 SVG…</button>
+      <button data-act="mesh">导入 3D 模型…</button>
+      <div class="menuSep"></div>
+      <button data-act="exportGcode">导出 G-code…</button>
+      <button data-act="exportCsv">导出带延时的时序…</button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="edit">
+    <button class="menuTitle">编辑</button>
+    <div class="menuDrop">
+      <button data-act="undo">撤销<span class="kbd">Ctrl+Z</span></button>
+      <button data-act="redo">重做<span class="kbd">Ctrl+Y</span></button>
+      <div class="menuSep"></div>
+      <button data-act="duplicate">复制一份<span class="kbd">Ctrl+D</span></button>
+      <button data-act="delete">删除选中<span class="kbd">Del</span></button>
+      <div class="menuSep"></div>
+      <button data-act="selectAll">全选路径<span class="kbd">Ctrl+A</span></button>
+      <button data-act="deselect">取消选择</button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="view">
+    <button class="menuTitle">视图</button>
+    <div class="menuDrop">
+      <button data-act="view2d">2D 编辑</button>
+      <button data-act="view3d">3D 预览</button>
+      <button data-act="viewSim">仿真回放</button>
+      <div class="menuSep"></div>
+      <button data-act="fit">适应窗口</button>
+      <button data-act="zoomIn">放大<span class="kbd">+</span></button>
+      <button data-act="zoomOut">缩小<span class="kbd">-</span></button>
+      <div class="menuSep"></div>
+      <button data-act="toggleLogs">显示 / 隐藏输出面板</button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="draw">
+    <button class="menuTitle">绘制</button>
+    <div class="menuDrop">
+      <button data-act="toolSelect">选择<span class="kbd">V</span></button>
+      <button data-act="toolLine">线段<span class="kbd">L</span></button>
+      <button data-act="toolRect">矩形<span class="kbd">R</span></button>
+      <button data-act="toolCircle">圆<span class="kbd">C</span></button>
+      <div class="menuSep"></div>
+      <button data-act="fillOne">填充选中形状</button>
+      <button data-act="fillAll">填充所有层</button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="machine">
+    <button class="menuTitle">机器</button>
+    <div class="menuDrop">
+      <button data-act="connect">连接</button>
+      <button data-act="probe">探活</button>
+      <div class="menuSep"></div>
+      <button data-act="send">发送到机器</button>
+      <button data-act="stopJob" class="dangerItem">中止发送</button>
+      <div class="menuSep"></div>
+      <button data-act="manual">手册</button>
+    </div>
+  </div>
+
+  <div class="menu" data-menu="help">
+    <button class="menuTitle">帮助</button>
+    <div class="menuDrop">
+      <button data-act="manual">使用手册</button>
+      <button data-act="manualBaby">宝宝级操作手册</button>
+      <button data-act="shortcuts">快捷键一览</button>
+      <div class="menuSep"></div>
+      <button data-act="reportF1">F1 板测试报告</button>
+      <button data-act="reportNic">网口板测试报告</button>
+      <div class="menuSep"></div>
+      <button data-act="about">关于 CAM-B</button>
+    </div>
+  </div>
+
+  <div class="spacer"></div>
+  <span id="statBadge" class="badge">就绪</span>
+  <button id="btnCompile" class="primary">生成 G-code</button>
+</div>
+
+<!-- ══════════ 主工具条 ══════════ -->
+<div class="toolbar">
+  <button id="btnUndo" class="iconBtn" title="撤销 (Ctrl+Z)" disabled>
+    <svg viewBox="0 0 16 16" width="15" height="15"><path d="M6 3L2 7l4 4M2 7h8a4 4 0 010 8H8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <button id="btnRedo" class="iconBtn" title="重做 (Ctrl+Shift+Z)" disabled>
+    <svg viewBox="0 0 16 16" width="15" height="15"><path d="M10 3l4 4-4 4M14 7H6a4 4 0 000 8h2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <span id="stepBadge" class="stepBadge" title="当前在第几步">0 步</span>
+
+  <div class="vsep"></div>
+
   <button id="btnNew" class="ghost sm">新建</button>
+  <button id="btnSample" class="ghost sm">示例</button>
   <button id="btnLoad" class="ghost sm">打开</button>
   <input type="file" id="fileLoad" accept=".json" hidden>
   <button id="btnSave" class="ghost sm">保存</button>
 
-  <div class="sep"></div>
+  <div class="vsep"></div>
 
   <button id="btnSvg" class="ghost sm">SVG</button>
   <input type="file" id="fileSvg" accept=".svg,image/svg+xml" hidden>
   <button id="btnMesh" class="ghost sm" title="导入 Blender 导出的 STL / OBJ 模型">3D 模型</button>
   <input type="file" id="fileMesh" accept=".stl,.obj" hidden>
 
-  <div class="sep"></div>
+  <div class="vsep"></div>
 
-  <!-- 撤销/重做 -->
-  <div class="undoGroup">
-    <button id="btnUndo" class="iconBtn" title="撤销 (Ctrl+Z)" disabled>
-      <svg viewBox="0 0 16 16" width="15" height="15"><path d="M6 3L2 7l4 4M2 7h8a4 4 0 010 8H8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </button>
-    <button id="btnRedo" class="iconBtn" title="重做 (Ctrl+Shift+Z)" disabled>
-      <svg viewBox="0 0 16 16" width="15" height="15"><path d="M10 3l4 4-4 4M14 7H6a4 4 0 000 8h2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </button>
-    <span id="stepBadge" class="stepBadge" title="当前在第几步">0 步</span>
-  </div>
+  <button id="btnSelectAll" class="ghost sm" title="选中所有路径 (Ctrl+A)">全选</button>
 
   <div class="spacer"></div>
+
+  <button id="btnToggleLogs" class="ghost sm active" title="显示/隐藏输出面板">输出</button>
   <a href="/manual" target="_blank" class="ghost sm helpBtn">怎么用？</a>
-  <span id="statBadge" class="badge">就绪</span>
-  <button id="btnCompile" class="primary">生成 G-code</button>
-</header>
+</div>
+
+<!-- ══════════ 工具选项条（跟随当前工具变化） ══════════ -->
+<div class="optionsbar">
+  <span class="optLabel">当前工具</span>
+  <span id="optTool" class="optValue">选择</span>
+  <div class="vsep"></div>
+  <span id="optHint" class="optHint">点形状选中，拖动移动</span>
+
+  <div class="spacer"></div>
+
+  <!-- 多边形边数 / 星形角数：只在对应工具下显示 -->
+  <span id="optPolyBox" class="optParam hidden">
+    <label>边数</label>
+    <input id="optSides" type="number" min="3" max="20" value="6" class="optNum">
+  </span>
+  <span id="optStarBox" class="optParam hidden">
+    <label>角数</label>
+    <input id="optPoints" type="number" min="3" max="20" value="5" class="optNum">
+  </span>
+
+  <!-- 旋转角度：所有图形通用 -->
+  <span id="optRotBox" class="optParam">
+    <label title="逆时针为正">旋转</label>
+    <input id="optRotation" type="number" min="-360" max="360" step="15" value="0" class="optNum">
+    <span class="optUnit">°</span>
+    <button id="btnRotPlus" class="stepBtn" title="加 15°">+</button>
+    <button id="btnRotMinus" class="stepBtn" title="减 15°">−</button>
+  </span>
+
+  <!-- 填充参数：填充工具 / 有选中时显示 -->
+  <div id="optFillBox" class="optParam hidden" style="flex-wrap:wrap;">
+    <select id="fillPattern" class="miniSelect">
+      <option value="grid">格栅（视频同款）</option>
+      <option value="honeycomb">蜂窝</option>
+      <option value="scanline">平行扫描（实心）</option>
+      <option value="concentric">同心轮廓（实心）</option>
+    </select>
+    <label class="chk" title="横竖两组筋错开半个间距，孔洞更均匀">
+      <input id="fillStagger" type="checkbox"> 错开
+    </label>
+    <button id="btnFill" class="accent2 sm">填充选中形状</button>
+    <button id="btnFillAll" class="ghost sm" title="把所有层的轮廓都填上（导入 3D 模型后用）">填所有层</button>
+  </div>
+
+  <span id="optSelInfo" class="optInfo"></span>
+</div>
 
 <main class="layout">
 
@@ -52,6 +191,9 @@
     <div class="toolgrid">
       <button data-tool="select" class="tool active" title="选择和移动 (V)">
         <span class="ico">➤</span><span>选择</span>
+      </button>
+      <button data-tool="point" class="tool" title="打一个墨点 (P)">
+        <span class="ico">•</span><span>点</span>
       </button>
       <button data-tool="line" class="tool" title="画一条线 (L)">
         <span class="ico">╱</span><span>线段</span>
@@ -62,44 +204,24 @@
       <button data-tool="circle" class="tool" title="画圆 (C)">
         <span class="ico">◯</span><span>圆</span>
       </button>
+      <button data-tool="ellipse" class="tool" title="画椭圆 (E)">
+        <span class="ico">⬭</span><span>椭圆</span>
+      </button>
+      <button data-tool="polygon" class="tool" title="正多边形 (G)，边数在选项条里调">
+        <span class="ico">⬠</span><span>多边形</span>
+      </button>
+      <button data-tool="diamond" class="tool" title="菱形 (D)">
+        <span class="ico">◇</span><span>菱形</span>
+      </button>
+      <button data-tool="star" class="tool" title="星形 (S)，角数在选项条里调">
+        <span class="ico">☆</span><span>星形</span>
+      </button>
+      <button data-tool="fill" class="tool" title="油漆桶 (F)：点哪个形状就填哪个">
+        <span class="ico">▨</span><span>填充</span>
+      </button>
     </div>
+    <div class="stripHint" title="选中形状后，填充按钮会出现在画布上方">选中形状<br>填充按钮<br>在画布上方</div>
 
-    <button id="btnFill" class="wide accent2">填充选中形状</button>
-
-    <div class="row compactRow">
-      <label>方式</label>
-      <select id="fillPattern">
-        <option value="grid">格栅（视频同款）</option>
-        <option value="honeycomb">蜂窝</option>
-        <option value="scanline">平行扫描（实心）</option>
-        <option value="concentric">同心轮廓（实心）</option>
-      </select>
-    </div>
-
-    <div class="row compactRow" id="rowStagger">
-      <label>错开</label>
-      <label class="chk"><input id="fillStagger" type="checkbox"> 两方向错半格</label>
-    </div>
-
-    <button id="btnFillAll" class="wide ghost" title="把所有层的轮廓都填上（导入 3D 模型后用）">一键填充所有层</button>
-
-    <div class="divider"></div>
-
-    <div class="sectionHead">
-      <span class="sectionLabel">形状列表</span>
-      <span id="shapeCount" class="countChip">0</span>
-    </div>
-    <div id="shapeList" class="shapeList"></div>
-
-    <div class="divider"></div>
-
-    <div class="sectionLabel">输出目标</div>
-    <select id="dialect" class="wide">
-      <option value="lc">LCSystem 自研板</option>
-      <option value="marlin">Marlin / Ultimaker</option>
-      <option value="klipper">Klipper</option>
-    </select>
-    <div id="dialectNote" class="muted xs"></div>
   </aside>
 
   <!-- ══════════ 中：画布 ══════════ -->
@@ -108,14 +230,85 @@
       <button data-view="2d" class="vtab active">2D 编辑</button>
       <button data-view="3d" class="vtab">3D 预览</button>
       <button data-view="sim" class="vtab">仿真</button>
+      <button data-view="machine" class="vtab">机器状态</button>
       <div class="spacer"></div>
       <span id="viewHint" class="muted xs"></span>
     </div>
 
     <div class="stage">
-      <canvas id="cv"></canvas>
-      <canvas id="cv3d" class="hidden"></canvas>
-      <canvas id="cvSim" class="hidden"></canvas>
+      <!-- 标尺：上边和左边，跟画布同步缩放/平移 -->
+      <canvas id="rulerTop" class="ruler rulerTop"></canvas>
+      <canvas id="rulerLeft" class="ruler rulerLeft"></canvas>
+      <div class="rulerCorner"></div>
+
+      <div class="canvasWrap">
+        <canvas id="cv"></canvas>
+        <canvas id="cv3d" class="hidden"></canvas>
+        <canvas id="cvSim" class="hidden"></canvas>
+      </div>
+
+      <!-- 视图工具条（浮在画布右上角） -->
+      <div class="canvasTools">
+        <label class="chk" title="显示/隐藏网格"><input id="chkGrid" type="checkbox" checked> 网格</label>
+        <label class="chk" title="拖动时吸附到网格"><input id="chkSnap" type="checkbox" checked> 吸附</label>
+        <select id="gridSize" class="miniSelect" title="网格大小">
+          <option value="1">1 mm</option>
+          <option value="5" selected>5 mm</option>
+          <option value="10">10 mm</option>
+        </select>
+      </div>
+
+      <!-- 机器状态页：16 路 IO 指示灯 + 底层通讯日志 -->
+      <div id="machineView" class="machineView hidden">
+        <div class="machineTop">
+          <div class="machineHead">
+            <span class="sectionLabel">IO 通用输入 / 输出状态</span>
+            <span class="spacer"></span>
+            <button id="btnPollIO" class="tinyBtn">刷新一次</button>
+            <label class="chk"><input id="chkAutoPoll" type="checkbox"> 自动刷新（1s）</label>
+            <span id="ioTimestamp" class="muted xs"></span>
+          </div>
+
+          <div class="ioGrid">
+            <div class="ioGroup">
+              <div class="ioGroupTitle">输出 IOOUT</div>
+              <div id="ioOutGrid" class="ioCells"></div>
+            </div>
+            <div class="ioGroup">
+              <div class="ioGroupTitle">输入 IOIN</div>
+              <div id="ioInGrid" class="ioCells"></div>
+            </div>
+            <div class="ioGroup">
+              <div class="ioGroupTitle">原点 IOORG</div>
+              <div id="ioOrgGrid" class="ioCells"></div>
+            </div>
+          </div>
+
+          <div class="ioRawRow">
+            <span class="muted xs">原始回包</span>
+            <code id="ioRaw" class="ioRaw">（未读取）</code>
+          </div>
+
+          <div class="ioQuickRow">
+            <span class="muted xs">快捷操作</span>
+            <button class="tinyBtn" data-io="M120">读全部</button>
+            <button class="tinyBtn" data-io="M121 V0">全关</button>
+            <button class="tinyBtn" data-io="M121 V255">全开</button>
+            <button class="tinyBtn" data-io="M114">查坐标</button>
+          </div>
+        </div>
+
+        <div class="machineLogs">
+          <div class="machineLogHead">
+            <span class="sectionLabel">底层通讯日志</span>
+            <span class="spacer"></span>
+            <span class="muted xs">完整日志在底部「输出」面板</span>
+          </div>
+          <div id="machineLogBody" class="machineLogBody">
+            <div class="logEmpty">还没有通讯记录。点上面「读全部」或连接机器后开始。</div>
+          </div>
+        </div>
+      </div>
 
       <div class="overlay2d">
         <span id="cursorPos">0, 0</span>
@@ -178,16 +371,37 @@
 
     <div class="bottom">
       <div class="bottomTabs">
-        <button data-bview="timeline" class="btab active">时间轴</button>
+        <button data-bview="timeline" class="btab">时间轴</button>
         <button data-bview="top" class="btab">路径俯视</button>
         <button data-bview="zoom" class="btab">单笔画放大</button>
         <button data-bview="gcode" class="btab">G-code</button>
+        <button data-bview="logs" class="btab active">输出<span id="logBadge" class="logBadge hidden"></span></button>
         <div class="spacer"></div>
+        <button id="btnBottomExpand" class="tinyBtn" title="展开/收起输出面板">⤢</button>
         <span id="simStats" class="badge dim">未生成</span>
       </div>
       <div class="bottomBody">
-        <canvas id="cvBottom"></canvas>
+        <canvas id="cvBottom" class="hidden"></canvas>
         <pre id="gcodeBox" class="hidden"></pre>
+
+        <div id="logPanel" class="logPanel">
+          <div class="logToolbar">
+            <div class="logFilters">
+              <button data-logfilter="all" class="logFilter active">全部</button>
+              <button data-logfilter="conn" class="logFilter">连接</button>
+              <button data-logfilter="job" class="logFilter">打印</button>
+              <button data-logfilter="error" class="logFilter">错误</button>
+            </div>
+            <input id="logSearch" class="logSearch" placeholder="过滤关键字…" spellcheck="false">
+            <label class="chk" title="显示原始字节"><input id="logHex" type="checkbox"> HEX</label>
+            <button id="btnLogPause" class="tinyBtn" title="停止自动滚动，方便往回翻">暂停</button>
+            <button id="btnLogClear" class="tinyBtn">清空</button>
+            <button id="btnLogExport" class="tinyBtn">导出</button>
+            <span id="logCount" class="logCount"></span>
+            <button id="btnLogBottom" class="tinyBtn hidden">回到底部</button>
+          </div>
+          <div id="logBody" class="logBody"><div class="logEmpty">暂无日志</div></div>
+        </div>
       </div>
     </div>
   </section>
@@ -195,17 +409,88 @@
   <!-- ══════════ 右：参数（分组卡片） ══════════ -->
   <aside class="panel right">
 
+    <!-- 打印摘要：一眼看清「会打几层、多高、多久」，层数可直接改 -->
+    <div class="summaryCard">
+      <div class="summaryHead">
+        <span class="sectionLabel">本次将打印</span>
+        <span id="sumBadge" class="badge dim">未生成</span>
+      </div>
+
+      <div class="summaryGrid">
+        <div class="sumCell">
+          <span class="sumLabel">层数</span>
+          <div class="sumValueRow">
+            <button id="btnLayerMinus" class="stepBtn" title="少打一层">−</button>
+            <input id="sumLayers" type="number" min="1" max="200" step="1" value="1" class="sumInput">
+            <button id="btnLayerPlus" class="stepBtn" title="多打一层">+</button>
+          </div>
+        </div>
+        <div class="sumCell">
+          <span class="sumLabel">总高度</span>
+          <span id="sumHeight" class="sumValue">0.4<i>mm</i></span>
+        </div>
+        <div class="sumCell">
+          <span class="sumLabel">笔画</span>
+          <span id="sumStrokes" class="sumValue">0</span>
+        </div>
+        <div class="sumCell">
+          <span class="sumLabel">预计耗时</span>
+          <span id="sumTime" class="sumValue">—</span>
+        </div>
+      </div>
+
+      <div id="sumHint" class="sumHint">还没画东西 —— 用左侧工具画个矩形试试</div>
+
+      <div class="summaryFoot">
+        <span class="sumLabel">层高</span>
+        <input id="sumLayerHeight" type="number" min="0.05" max="2" step="0.05" value="0.4" class="sumInputSm">
+        <span class="sumUnit">mm</span>
+        <span class="sumDiv"></span>
+        <span class="sumLabel">起始Z</span>
+        <input id="sumStartZ" type="number" min="0" max="50" step="0.1" value="0.4" class="sumInputSm">
+        <span class="sumUnit">mm</span>
+      </div>
+    </div>
+
     <div id="nextStep" class="nextStep">
       <div class="nextStepTitle">下一步</div>
       <div id="nextStepText" class="nextStepText">画一个形状开始</div>
       <button id="nextStepBtn" class="wide primary hidden"></button>
     </div>
 
+    <!-- 对象列表（可折叠） -->
+    <details class="paramGroup" id="shapeListGroup">
+      <summary>
+        <span class="pgIcon">☰</span>
+        <span class="pgTitle">对象列表</span>
+        <span id="shapeCount" class="countChip">0</span>
+      </summary>
+      <div class="pgBody">
+        <div id="shapeList" class="shapeList"></div>
+      </div>
+    </details>
+
     <!-- 选中形状 -->
     <div id="selPanel" class="hidden">
       <div class="sectionHead">
         <span class="sectionLabel" id="selTitle">选中</span>
         <span id="selMeta" class="countChip"></span>
+      </div>
+
+      <!-- 位置与尺寸（可直接输入数值） -->
+      <div class="geoCard">
+        <div class="geoRow">
+          <span class="geoLabel">中心</span>
+          <label class="geoField"><span>X</span><input id="geoX" type="number" step="0.1" value="0"></label>
+          <label class="geoField"><span>Y</span><input id="geoY" type="number" step="0.1" value="0"></label>
+        </div>
+        <div class="geoRow">
+          <span class="geoLabel">尺寸</span>
+          <label class="geoField"><span>宽</span><input id="geoW" type="number" step="0.1" min="0.1" value="0"></label>
+          <label class="geoField"><span>高</span><input id="geoH" type="number" step="0.1" min="0.1" value="0"></label>
+          <button id="btnLockRatio" class="lockBtn active" title="锁定宽高比">🔒</button>
+        </div>
+        <p class="paramHelp xs">改完自动生效，可撤销</p>
       </div>
 
       <div class="ioCard">
@@ -277,6 +562,7 @@
           <div class="paramHead">
             <label>开阀延时</label>
             <output id="outRise">120</output><span class="unit">ms</span>
+            <button id="btnApplyRise" class="tinyBtn" title="把这个值应用给所有路径的起点">应用到全部起点</button>
           </div>
           <input id="pRise" type="range" min="0" max="500" step="5" value="120" data-num="120">
           <p class="paramHelp">起点线条细或有缺口 → 调大；起点鼓包 → 调小</p>
@@ -285,6 +571,7 @@
           <div class="paramHead">
             <label>关阀延时</label>
             <output id="outTail">80</output><span class="unit">ms</span>
+            <button id="btnApplyTail" class="tinyBtn" title="把这个值应用给所有路径的终点">应用到全部终点</button>
           </div>
           <input id="pTail" type="range" min="0" max="500" step="5" value="80" data-num="80">
           <p class="paramHelp">终点拖尾或拉丝 → 调大；终点断口 → 调小</p>
@@ -319,10 +606,26 @@
         <div class="param">
           <div class="paramHead">
             <label>线间距</label>
-            <output id="outSpacing">1.5</output><span class="unit">mm</span>
+            <select id="fillSpacingPreset" class="miniSelect">
+              <option value="0.1">0.1 mm</option>
+              <option value="0.2">0.2 mm</option>
+              <option value="0.3">0.3 mm</option>
+              <option value="0.5">0.5 mm</option>
+              <option value="0.8">0.8 mm</option>
+              <option value="1" selected>1 mm</option>
+              <option value="2">2 mm</option>
+              <option value="custom">自定义…</option>
+            </select>
           </div>
-          <input id="fillSpacing" type="range" min="0.3" max="10" step="0.1" value="1.5" data-num="1.5">
-          <p class="paramHelp">越小越密（慢），越大越疏（快）</p>
+          <p class="paramHelp">这是「孔的大小」不是线宽。越小越密（慢），越大越疏（快）</p>
+        </div>
+        <input id="fillSpacing" type="hidden" value="1">
+        <div class="param hidden" id="paramSpacingCustom">
+          <div class="paramHead">
+            <label>自定义间距</label>
+            <output id="outSpacing">1</output><span class="unit">mm</span>
+          </div>
+          <input id="fillSpacingCustom" type="range" min="0.1" max="10" step="0.1" value="1" data-num="1">
         </div>
         <div class="param">
           <div class="paramHead">
@@ -357,14 +660,7 @@
           </div>
           <input id="pLayerHeight" type="range" min="0.05" max="2" step="0.05" value="0.4" data-num="0.4">
         </div>
-        <div class="param">
-          <div class="paramHead">
-            <label>重复层数</label>
-            <output id="outRepeat">1</output><span class="unit">层</span>
-          </div>
-          <input id="layerRepeat" type="range" min="1" max="100" step="1" value="1" data-num="1">
-          <p class="paramHelp">同一图形重复打印几层，用来堆高度</p>
-        </div>
+        <p class="paramHelp">层数请用右上方「本次将打印」卡片调整</p>
         <div class="param">
           <div class="paramHead">
             <label>起始 Z</label>
@@ -416,19 +712,62 @@
     <div class="divider"></div>
 
     <!-- 连接与下发 -->
-    <div class="sectionHead">
+
+  <!-- 连接与下发（默认折叠，点标题展开） -->
+  <!-- 输出目标：决定 G-code 用哪套指令（和机器强相关） -->
+  <div class="sectionHead" style="margin-top:2px;">
+    <span class="sectionLabel">输出目标</span>
+  </div>
+  <select id="dialect" class="wide">
+    <option value="lc">网口板（i.MX RT1170）</option>
+    <option value="f1">F1 串口板（仅运动，不能控阀）</option>
+    <option value="marlin">Marlin / Ultimaker</option>
+    <option value="klipper">Klipper</option>
+  </select>
+  <div id="dialectNote" class="muted xs"></div>
+
+  <details class="connGroup">
+    <summary>
       <span class="sectionLabel">连接机器</span>
       <span id="connDot" class="connDot"></span>
-    </div>
-
+    </summary>
+    <div class="connBody">
     <div class="connBox">
       <div class="row compactRow">
-        <label>IP</label>
-        <input id="ipAddr" value="192.168.0.102" spellcheck="false">
+        <label>连接方式</label>
+        <select id="connMode">
+          <option value="udp">网络（UDP，网口板）</option>
+          <option value="serial">串口（F1 板）</option>
+        </select>
       </div>
-      <div class="row compactRow">
-        <label>端口</label>
-        <input id="ipPort" type="number" value="5000" min="1" max="65535">
+
+      <div id="serialFields">
+        <div class="row compactRow">
+          <label>串口</label>
+          <div style="display:flex;gap:4px;">
+            <select id="serialPort" style="flex:1;"></select>
+            <button id="btnRefreshPorts" class="tinyBtn" title="刷新串口列表">↻</button>
+          </div>
+        </div>
+        <div class="row compactRow">
+          <label>波特率</label>
+          <select id="serialBaud">
+            <option value="115200">115200</option>
+            <option value="57600">57600</option>
+            <option value="230400">230400</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="udpFields" class="hidden">
+        <div class="row compactRow">
+          <label>IP</label>
+          <input id="ipAddr" value="192.168.0.102" spellcheck="false">
+        </div>
+        <div class="row compactRow">
+          <label>端口</label>
+          <input id="ipPort" type="number" value="5000" min="1" max="65535">
+        </div>
       </div>
 
       <div class="connBtns">
@@ -446,25 +785,65 @@
 
       <div id="connMsg" class="connMsg muted xs">未连接</div>
 
-      <button id="btnSend" class="wide primary" disabled>发送到机器</button>
-      <button id="btnStopJob" class="wide danger hidden">中止发送</button>
-
-      <div id="jobBox" class="jobBox hidden">
-        <div class="jobProgressWrap"><div id="jobProgress" class="jobProgress"></div></div>
-        <div id="jobText" class="muted xs"></div>
-      </div>
-
       <div id="manualBox" class="manualBox">
         <div class="row compactRow">
           <label>手动指令</label>
-          <input id="manualCmd" placeholder="M121 U0 V1" spellcheck="false">
+          <input id="manualCmd" placeholder="M50" spellcheck="false">
         </div>
         <button id="btnManualSend" class="sm wide">发送一行</button>
         <div id="manualResult" class="muted xs"></div>
       </div>
     </div>
-  </aside>
+    </div>
+  </details>
+    <!-- 发送是主操作，常驻在连接区外面，不藏进折叠 -->
+    <button id="btnSend" class="wide primary" disabled>发送到机器</button>
+    <button id="btnStopJob" class="wide danger hidden">中止发送</button>
+    <div id="jobBox" class="jobBox hidden">
+      <div class="jobProgressWrap"><div id="jobProgress" class="jobProgress"></div></div>
+      <div id="jobText" class="muted xs"></div>
+    </div>
+
+
+    </aside>
 </main>
+
+<!-- ══════════ 状态栏（EzCad 风格：一行常驻关键状态） ══════════ -->
+<div class="statusbar">
+  <span class="sbItem"><span class="sbLabel">X</span><span id="sbX">0.00</span></span>
+  <span class="sbItem"><span class="sbLabel">Y</span><span id="sbY">0.00</span></span>
+  <span class="sbDiv"></span>
+  <span class="sbItem"><span class="sbLabel">缩放</span><span id="sbZoom">100%</span></span>
+  <span class="sbItem"><span class="sbLabel">网格</span><span id="sbGrid">5 mm</span></span>
+  <span class="sbItem"><span class="sbLabel">吸附</span><span id="sbSnap">开</span></span>
+  <span class="sbDiv"></span>
+  <span class="sbItem"><span class="sbLabel">对象</span><span id="sbCount">0</span></span>
+  <span class="sbItem"><span class="sbLabel">已选</span><span id="sbSel">无</span></span>
+  <span class="sbDiv"></span>
+  <span class="sbItem"><span class="sbLabel">输出</span><span id="sbDialect">网口板</span></span>
+  <span class="sbSpacer"></span>
+  <span id="sbHint" class="sbHint">左键拖动平移 · 滚轮缩放 · Shift 正交约束</span>
+  <span class="sbDiv"></span>
+  <span id="sbConn" class="sbConn">未连接</span>
+  <span class="sbDiv"></span>
+  <span id="sbVersion" class="sbVersion" title="点击查看版本信息">v—</span>
+</div>
+
+<!-- 关于对话框 -->
+<div id="aboutBox" class="aboutBox hidden">
+  <div class="aboutCard">
+    <h2 id="aboutName">CAM-B</h2>
+    <div class="ver" id="aboutVer">v—</div>
+    <dl>
+      <dt>定位</dt><dd id="aboutDesc">路径工艺平台</dd>
+      <dt>核心</dt><dd>路径绑定工具，两端各控制一个输出 + 一个延时</dd>
+      <dt>支持工艺</dt><dd>气动挤出 / 激光切割 / 激光打标（扩展中）</dd>
+      <dt>后端</dt><dd>Python · FastAPI</dd>
+      <dt>前端</dt><dd>原生 JS · Canvas 2D（零框架零构建）</dd>
+    </dl>
+    <button id="btnAboutClose" class="primary close">关闭</button>
+  </div>
+</div>
 
 <script type="module" src="/static/app.js"></script>
 </body>

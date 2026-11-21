@@ -1,4 +1,4 @@
-"""pathCAM 启动入口（给 PyInstaller 打包用）。
+"""CAM-B 启动入口（给 PyInstaller 打包用）。
 
 与 start.bat 的区别：
 - 自动找一个空闲端口（8765 被占也不怕）
@@ -14,6 +14,40 @@ import sys
 import threading
 import time
 import webbrowser
+
+from app.version import APP_NAME, APP_TITLE, VERSION
+
+
+def _fix_console_encoding():
+    """把控制台切到 UTF-8，否则中文横幅会乱码。
+
+    Windows 控制台默认代码页 936(GBK)，Python 按 cp936 输出 UTF-8 里的
+    中文就会变成乱码。必须在**任何 print 之前**调用。
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        k = ctypes.windll.kernel32
+        if k.GetConsoleWindow():      # 真的连着控制台才切，别污染管道
+            k.SetConsoleOutputCP(65001)
+            k.SetConsoleCP(65001)
+    except Exception:
+        pass
+    for name in ("stdout", "stderr"):
+        s = getattr(sys, name, None)
+        if s is None:
+            continue
+        try:
+            enc = (s.encoding or "").lower().replace("-", "")
+            if enc and enc != "utf8":
+                s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+_fix_console_encoding()
 
 
 def resource_root() -> str:
@@ -46,7 +80,8 @@ def main():
     url = f"http://127.0.0.1:{port}"
 
     print("=" * 52)
-    print("  pathCAM · 3D 路径规划上位机")
+    print(f"  {APP_TITLE}")
+    print(f"  版本 {VERSION}")
     print("=" * 52)
     print(f"  地址: {url}")
     print("  浏览器会自动打开。关闭这个窗口即退出。")

@@ -1,4 +1,4 @@
-# pathCAM
+# CAM-B
 
 给气动挤出式 3D 打印机用的**路径规划上位机**。
 
@@ -18,7 +18,7 @@
 
 ### 方式一：直接运行（推荐）
 
-双击 `pathCAM.exe`（从 [Releases](../../releases) 下载），浏览器会自动打开。
+双击下载到的 `CAM-B-*-dist.exe`（从 [Releases](../../releases) 下载），浏览器会自动打开。
 
 ### 方式二：从源码运行
 
@@ -101,7 +101,7 @@ build.py         打包脚本
 python build.py
 ```
 
-产物 `dist/pathCAM.exe`（约 29MB 单文件）。
+产物 `dist/CAM-B-<版本>-dist.exe`（约 29MB 单文件）。
 
 > 打包前先关掉正在运行的旧 exe，否则会报 `WinError 5` 文件被占用。
 

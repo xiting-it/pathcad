@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -49,7 +50,28 @@ def _root() -> Path:
 ROOT = _root()
 WEB = ROOT / "web"
 
-app = FastAPI(title="pathCAM", version="0.1.0")
+from .version import (
+    APP_DESC,
+    APP_NAME,
+    APP_SLUG,
+    APP_TITLE,
+    LEGACY_NAMES,
+    VERSION,
+)
+
+app = FastAPI(title=APP_NAME, description=APP_DESC, version=VERSION)
+
+
+@app.on_event("startup")
+def _startup():
+    """初始化日志：控制台只打关键事件，文件写到 <ROOT>/data/log/。"""
+    from .logger import SRC_SYS, init
+
+    # 打包后 ROOT 是 _MEIPASS（临时解压目录），日志要写到 exe 旁边
+    data_root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else ROOT
+    lg = init(data_root, console=True, file=True)
+    lg.info(SRC_SYS, f"{APP_NAME} {VERSION} 启动　root={ROOT}")
+    lg.info(SRC_SYS, f"日志写入 {data_root / 'data' / 'log'}")
 
 
 # ── 请求模型 ────────────────────────────────────────────
@@ -177,14 +199,19 @@ def api_compile(req: CompileReq):
             "lines": len(c.lines),
             "path_length": round(c.path_length, 2),
             "est_seconds": round(estimate_time(c.lines, req.project.machine, req.project.process), 1),
+            # 上位机延时总和（dwell="host" 模式才有）
+            "host_dwell_seconds": round(sum(c.delays), 2),
         },
         "warnings": c.warnings,
         "sim": sim.to_dict() if sim else None,
         "io_transitions": tr,
+        # dwell="host" 时，下发器要按这个数组 sleep
+        "delays": [round(x, 4) for x in c.delays],
         "dialect": {
             "name": d.name,
             "queued_io": d.queued_io,
             "max_line_len": d.max_line_len,
+            "dwell": c.dwell_mode,
         },
     }
 
@@ -526,7 +553,8 @@ def _render_markdown(text: str) -> str:
             if i == 1 and all(set(c) <= set("-: ") for c in cells):
                 continue  # 分隔行
             tag = "th" if i == 0 else "td"
-            out.append("<tr>" + "".join(f"<{tag}>{c}</{tag}>" for c in cells) + "</tr>")
+            # 单元格内容也要走 inline()，否则 **粗体** 和 `代码` 不生效
+            out.append("<tr>" + "".join(f"<{tag}>{inline(c)}</{tag}>" for c in cells) + "</tr>")
         out.append("</table>")
         table_rows = []
         in_table = False
@@ -598,7 +626,7 @@ def _render_markdown(text: str) -> str:
     body = "\n".join(out)
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
-<title>pathCAM 使用手册</title>
+<title>{APP_TITLE} · 使用手册</title>
 <style>
 body{{max-width:860px;margin:0 auto;padding:36px 28px 90px;
 background:#14171c;color:#dfe4ec;
@@ -631,7 +659,7 @@ padding:0 20px;gap:14px;font-size:13px;z-index:9}}
 .pad{{height:44px}}
 </style></head><body>
 <div class="top">
-  <b style="color:#4ea3ff">pathCAM</b>
+  <b style="color:#4ea3ff">{APP_NAME}</b>
   <a href="/">← 回到编辑器</a>
   <span style="color:#5a6373">使用手册</span>
 </div>
@@ -640,13 +668,188 @@ padding:0 20px;gap:14px;font-size:13px;z-index:9}}
 </body></html>"""
 
 
-@app.get("/manual-img/{name}")
+@app.get("/manual-img/{name:path}")
 def manual_img(name: str):
-    """手册里的截图。"""
-    p = ROOT / "_manual" / name
-    if not p.exists():
+    """手册里的截图。支持子目录（如 f1/01-serial-session.png）。
+
+    只允许 _manual/ 下的文件，防目录穿越。
+    """
+    base = (ROOT / "_manual").resolve()
+    p = (base / name).resolve()
+    if not str(p).startswith(str(base)) or not p.exists():
         raise HTTPException(404, "image not found")
     return FileResponse(p)
+
+
+@app.get("/api/version")
+def api_version() -> dict:
+    """版本信息。前端状态栏和「关于」用它。"""
+    return {"version": VERSION, "app": APP_NAME, "slug": APP_SLUG,
+            "desc": APP_DESC, "legacy": list(LEGACY_NAMES)}
+
+
+@app.get("/docs/{name}")
+def docs_page(name: str):
+    """把 docs/ 下的 md 渲染成网页（如 F1板卡测试报告）。"""
+    md = ROOT / "docs" / f"{name}.md"
+    if not md.exists():
+        raise HTTPException(404, "doc not found")
+    html = _render_markdown(md.read_text(encoding="utf-8"))
+    return PlainTextResponse(html, media_type="text/html; charset=utf-8")
+
+
+@app.get("/api/serial/ports")
+def api_serial_ports():
+    """列出可用串口。"""
+    from .serial_f1 import list_serial_ports
+
+    return {"ports": list_serial_ports()}
+
+
+class SerialConnectReq(BaseModel):
+    port: str = Field("COM7")
+    baud: int = Field(115200, gt=0)
+
+
+@app.post("/api/serial/connect")
+def api_serial_connect(req: SerialConnectReq):
+    from .serial_f1 import get_serial_link
+
+    link = get_serial_link(req.port, req.baud)
+    ok, msg = link.open()
+    return {"ok": ok, "message": msg, "state": link.snapshot()}
+
+
+@app.post("/api/serial/disconnect")
+def api_serial_disconnect(req: SerialConnectReq):
+    from .serial_f1 import get_serial_link
+
+    link = get_serial_link(req.port, req.baud)
+    link.close()
+    return {"ok": True, "message": "已断开", "state": link.snapshot()}
+
+
+@app.get("/api/serial/status")
+def api_serial_status(port: str = "COM7", baud: int = 115200):
+    from .serial_f1 import get_serial_link
+
+    return get_serial_link(port, baud).snapshot()
+
+
+@app.post("/api/serial/probe")
+def api_serial_probe(req: SerialConnectReq):
+    """探活：发 M50。"""
+    from .serial_f1 import get_serial_link
+
+    link = get_serial_link(req.port, req.baud)
+    if not link.state.connected:
+        ok, msg = link.open()
+        if not ok:
+            return {"ok": False, "message": msg}
+    r = link.query_status()
+    if r.is_status:
+        return {
+            "ok": True,
+            "message": f"连通，位置 ({r.pos[0]:g}, {r.pos[1]:g}, {r.pos[2]:g})",
+            "pos": list(r.pos),
+            "limits_left": list(r.limits_left),
+            "limits_right": list(r.limits_right),
+        }
+    return {"ok": False, "message": f"M50 返回 {r.code}（{r.desc}）" if r.code else "无应答"}
+
+
+@app.post("/api/serial/send-one")
+def api_serial_send_one(payload: dict):
+    """手动发一行。"""
+    from .serial_f1 import get_serial_link
+
+    port = payload.get("port", "COM7")
+    baud = int(payload.get("baud", 115200))
+    line = str(payload.get("line", "")).strip()
+    if not line:
+        raise HTTPException(400, "指令为空")
+
+    link = get_serial_link(port, baud)
+    if not link.state.connected:
+        ok, msg = link.open()
+        if not ok:
+            return {"ok": False, "message": msg}
+
+    r = link.ask(line, timeout=120 if line.upper().startswith(("G00", "G01", "G02", "G28")) else 10)
+    return {
+        "ok": r.ok,
+        "code": r.code,
+        "raw": r.raw,
+        "desc": r.desc,
+        "elapsed": round(r.elapsed, 3),
+        "message": r.raw or "(超时)",
+    }
+
+
+class SerialJobReq(BaseModel):
+    gcode: str
+    port: str = Field("COM7")
+    baud: int = Field(115200, gt=0)
+
+
+@app.post("/api/serial/job/start")
+def api_serial_job_start(req: SerialJobReq):
+    from .serial_f1 import get_serial_job, get_serial_link
+
+    link = get_serial_link(req.port, req.baud)
+    if not link.state.connected:
+        ok, msg = link.open()
+        if not ok:
+            return {"ok": False, "message": msg}
+
+    job = get_serial_job(req.port, req.baud)
+    ok, msg = job.start(req.gcode)
+    return {"ok": ok, "message": msg, "state": job.snapshot()}
+
+
+@app.post("/api/serial/job/stop")
+def api_serial_job_stop(req: SerialConnectReq):
+    from .serial_f1 import get_serial_job
+
+    job = get_serial_job(req.port, req.baud)
+    job.stop()
+    return {"ok": True, "message": "已请求中止", "state": job.snapshot()}
+
+
+@app.get("/api/serial/job/status")
+def api_serial_job_status(port: str = "COM7", baud: int = 115200):
+    from .serial_f1 import get_serial_job
+
+    return get_serial_job(port, baud).snapshot()
+
+
+@app.get("/api/logs")
+def api_logs(after: int = 0, limit: int = 800):
+    """增量拉取日志。after = 前端已收到的最后一条 seq。"""
+    from .logger import get_logger
+
+    return get_logger().since(after, limit)
+
+
+@app.post("/api/logs/clear")
+def api_logs_clear():
+    from .logger import get_logger
+
+    get_logger().clear()
+    return {"ok": True}
+
+
+@app.get("/api/logs/info")
+def api_logs_info():
+    from .logger import get_logger
+
+    lg = get_logger()
+    return {
+        "file_enabled": lg.file_enabled,
+        "file": str(lg._file_path) if getattr(lg, "_file_path", None) else None,
+        "dir": str(getattr(lg, "_log_dir", "") or ""),
+        "console": lg.console_enabled,
+    }
 
 
 @app.get("/")
@@ -671,6 +874,11 @@ class JobReq(BaseModel):
     gcode: str
     ip: str = Field("192.168.0.102")
     port: int = Field(5000, gt=0, lt=65536)
+    # dwell="host" 模式下，每行之后上位机要等多少秒（来自 /api/compile）
+    delays: list[float] | None = None
+    # 每包发几条。1=逐行一发一等（每行约 300ms 往返开销）
+    # 4~6 能把开销摊薄到 50~75ms/行。0/None = 用默认
+    batch_size: int = Field(6, ge=0, le=8)
 
 
 @app.get("/api/link/mock/status")
@@ -767,8 +975,8 @@ def job_start(req: JobReq):
         ok, msg = link.open()
         if not ok:
             return {"ok": False, "message": msg}
-    job = get_job(req.ip, req.port)
-    ok, msg = job.start(req.gcode)
+    job = get_job(req.ip, req.port, batch_size=req.batch_size or 1)
+    ok, msg = job.start(req.gcode, delays=req.delays)
     return {"ok": ok, "message": msg, "state": job.snapshot()}
 
 

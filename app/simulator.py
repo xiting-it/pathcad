@@ -241,7 +241,11 @@ def simulate(gcode: str, accel: float = 300.0, dt: float = 0.01) -> SimResult:
 
         # ── 运动 ──
         if up.startswith("G0") or up.startswith("G1"):
-            is_print = up.startswith("G1")
+            # ⚠️ 不能写 up.startswith("G1")：F1 方言输出的是 "G01"，
+            # "G01".startswith("G1") 是 False，会把所有打印段误判成空驶。
+            # 用第一个 token 精确比较，同时兼容 G0/G00/G1/G01。
+            first = up.split()[0] if up.split() else ""
+            is_print = first in ("G1", "G01")
             nx, ny, nz = x, y, z
             for tok in up.split():
                 try:

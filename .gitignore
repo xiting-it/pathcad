@@ -53,3 +53,16 @@ _proto.txt
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ── 一次性调试产物（2026-11 清理）────────
+_batch_perf.json
+_f1_demo.json
+_f1_report.json
+_nic_report.json
+_docx.txt
+_docx_img/
+_proto_f1.txt
+_proto*.txt
+
+# ── 运行时数据（日志）──────────────────
+data/

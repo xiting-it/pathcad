@@ -26,6 +26,10 @@ DOCS = [
     (ROOT / "交付说明.md", "3-交付说明.html", "交付说明"),
     (ROOT / "docs" / "网口板测试报告.md", "4-网口板测试报告.html", "网口板测试报告"),
     (ROOT / "docs" / "F1板卡测试报告.md", "5-F1板卡测试报告.html", "F1板卡测试报告"),
+    # 面向技术人员（开发/合作方）
+    (ROOT / "docs" / "架构总览.md", "6-架构总览.html", "架构总览"),
+    (ROOT / "docs" / "H5协议备忘.md", "7-H5协议备忘.html", "H5协议备忘"),
+    (ROOT / "docs" / "版本管理与发布.md", "8-版本管理与发布.html", "版本管理与发布"),
 ]
 
 
@@ -155,8 +159,23 @@ def main() -> None:
         "3-交付说明.html": "启动方式、硬件连接、参数标定、给开发者的信息。",
         "4-网口板测试报告.html": "i.MX RT1170 网口板的实测数据。",
         "5-F1板卡测试报告.html": "STM32F103 串口板的实测数据。",
+        "6-架构总览.html": "分层架构、模块职责、核心抽象、扩展点、已知架构债。面向开发。",
+        "7-H5协议备忘.html": "H5 板协议，含官方文档与实际不符之处。面向开发。",
+        "8-版本管理与发布.html": "SemVer 规则、发版流程、提交规范、CHANGELOG 维护。",
     }
+    index.append("<h2 style='color:#8b95a5;font-size:15px;margin:26px 0 8px'>使用文档</h2>")
     for _, out_name, title in DOCS:
+        if out_name.startswith(("6-", "7-", "8-")):
+            continue
+        if (OUT / out_name).exists():
+            index.append(
+                f"<a class='card' href='{out_name}'><b>{title}</b>"
+                f"<span>{desc.get(out_name, '')}</span></a>"
+            )
+    index.append("<h2 style='color:#8b95a5;font-size:15px;margin:26px 0 8px'>开发文档</h2>")
+    for _, out_name, title in DOCS:
+        if not out_name.startswith(("6-", "7-", "8-")):
+            continue
         if (OUT / out_name).exists():
             index.append(
                 f"<a class='card' href='{out_name}'><b>{title}</b>"

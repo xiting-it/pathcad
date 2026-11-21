@@ -138,6 +138,21 @@ def compile_project(
 
     m = project.machine
     p = project.process
+
+    # 轴方向反转：把「工件坐标」映射成「机器坐标」。
+    # 电机接线装反时，命令 +10 实际往负方向跑，取负即可纠正。
+    invx = -1.0 if getattr(m, "invert_x", False) else 1.0
+    invy = -1.0 if getattr(m, "invert_y", False) else 1.0
+    invz = -1.0 if getattr(m, "invert_z", False) else 1.0
+
+    def MX(x: float) -> float:
+        return x * invx
+
+    def MY(y: float) -> float:
+        return y * invy
+
+    def MZ(z: float) -> float:
+        return z * invz
     prog = Program()
     warnings: list[str] = []
     stroke_n = 0
@@ -179,9 +194,33 @@ def compile_project(
         emit(modal(line))
 
     lift = p.lift_z
-    safe = safe_z if safe_z is not None else max(m.travel_z, lift + 1.0)
+
+    # ── 安全高度 ──
+    # 作用只是「XY 空驶时把针抬起来别蹭到工件」，不需要抬到机器顶部。
+    #
+    # ⚠️ 曾经写成 max(m.travel_z, lift+1)，结果默认 travel_z=100 就生成
+    #    `G0 Z100`。如果机器的 Z 实际行程只有几毫米，这一条会直接顶着
+    #    限位堵转 —— 电机满电流不转，几分钟就烧。这是真事过的事故。
+    #
+    # 正确做法：抬到「本工程最高一层 + 抬针高度 + 余量」，再受 travel_z 约束。
+    top_z = 0.0
+    for _ly in project.layers:
+        if _ly.visible and _ly.strokes:
+            top_z = max(top_z, _ly.z + max(0, _ly.repeat - 1) * _ly.z_step)
+    if safe_z is not None:
+        safe = safe_z
+    else:
+        safe = top_z + lift + 1.0
+    # 无论如何不能超过机器行程
+    if m.travel_z > 0:
+        safe = min(safe, m.travel_z)
+    warnings.append(
+        f"安全高度 {safe:g}mm（最高层 {top_z:g} + 抬针 {lift:g} + 1），"
+        f"机器行程 {m.travel_z:g}mm"
+    ) if safe >= m.travel_z > 0 else None
+
     emit_text(f"; lift to safe z={_f(safe)}")
-    emit(ir_move(z=safe, feed=p.lift_feed, rapid=True))
+    emit(ir_move(z=MZ(safe), feed=p.lift_feed, rapid=True))
 
     for layer in project.layers:
         if not layer.visible or not layer.strokes:
@@ -232,8 +271,8 @@ def compile_project(
                 # ②③ 空驶到起点 + 降到位
                 # ⚠️ 不能把「抬针」和「空驶」合并成斜线：
                 # 那样针头会贴着工件表面斜着蹭过去，撞坏已打印的格栅。
-                emit(ir_move(x=pts[0][0], y=pts[0][1], feed=m.feed_rapid, rapid=True))
-                emit(ir_move(z=z, feed=lf, rapid=True))
+                emit(ir_move(x=MX(pts[0][0]), y=MY(pts[0][1]), feed=m.feed_rapid, rapid=True))
+                emit(ir_move(z=MZ(z), feed=lf, rapid=True))
 
                 # ④ 开工具  ⑤ 上升延时
                 emit_tool_on(tool)
@@ -246,7 +285,7 @@ def compile_project(
                 if dialect.queued_io:
                     # IO 随运动排队：不需要切一刀
                     for i in range(1, len(pts)):
-                        emit(ir_move(x=pts[i][0], y=pts[i][1], feed=feed))
+                        emit(ir_move(x=MX(pts[i][0]), y=MY(pts[i][1]), feed=feed))
                     emit_tool_off(tool, force=True)
                     emit_dwell(tail)
                 elif back > 1e-6:
@@ -258,19 +297,19 @@ def compile_project(
                             f"{_f(back, 3)}mm，切点钳到起点"
                         )
                     for i in range(1, cut_idx):
-                        emit(ir_move(x=pts[i][0], y=pts[i][1], feed=feed))
-                    emit(ir_move(x=cut[0], y=cut[1], feed=feed))
+                        emit(ir_move(x=MX(pts[i][0]), y=MY(pts[i][1]), feed=feed))
+                    emit(ir_move(x=MX(cut[0]), y=MY(cut[1]), feed=feed))
                     emit_tool_off(tool, force=True)
                     emit_dwell(tail)
-                    emit(ir_move(x=end_pt[0], y=end_pt[1], feed=feed))
+                    emit(ir_move(x=MX(end_pt[0]), y=MY(end_pt[1]), feed=feed))
                 else:
                     for i in range(1, len(pts)):
-                        emit(ir_move(x=pts[i][0], y=pts[i][1], feed=feed))
+                        emit(ir_move(x=MX(pts[i][0]), y=MY(pts[i][1]), feed=feed))
                     emit_tool_off(tool, force=True)
                     emit_dwell(tail)
 
                 # ⑩ 抬针断料（不可省，理由见上）
-                emit(ir_move(z=z + lz, feed=lf, rapid=True))
+                emit(ir_move(z=MZ(z + lz), feed=lf, rapid=True))
 
     emit(comment(""))
     for line in dialect.footer(ctx):

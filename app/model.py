@@ -135,6 +135,17 @@ class Machine(BaseModel):
     feed_rapid: float = Field(6000.0, gt=0, description="mm/min 空驶")
     accel: float = Field(300.0, gt=0, description="mm/s²")
 
+    # 轴方向反转。
+    # 电机接线顺序装反时，命令 +10 实际往负方向跑。传统做法是拆开重接线，
+    # 换成这里打个勾就行：编译时把该轴坐标取负。
+    #
+    # 注意：取负会同时镜像坐标系，所以它适合「整轴装反」的情况，
+    # 不适合「只差一点点」的微调（那种要用原点偏移）。
+    invert_x: bool = False
+    invert_y: bool = False
+    invert_z: bool = False
+    invert_e: bool = False
+
 
 class Process(BaseModel):
     """全局工艺配置。

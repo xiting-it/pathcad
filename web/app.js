@@ -2486,6 +2486,61 @@ function applyProject(p, { record = false, label = '载入工程' } = {}) {
   }
 }
 
+
+// ══════════════════════════════════════════════════════════
+// 机器设置（行程 / 轴方向反转 / 原点开关）
+// ══════════════════════════════════════════════════════════
+
+function openMachineSettings() {
+  const m = S.project?.machine;
+  if (!m) return;
+  $('msTravelX').value = m.travel_x ?? 200;
+  $('msTravelY').value = m.travel_y ?? 200;
+  $('msTravelZ').value = m.travel_z ?? 100;
+  $('msInvX').checked = !!m.invert_x;
+  $('msInvY').checked = !!m.invert_y;
+  $('msInvZ').checked = !!m.invert_z;
+  $('msInvE').checked = !!m.invert_e;
+  $('msHomeSwitch').checked = !!m.has_home_switch;
+  $('msSoftLimit').checked = !!m.soft_limit;
+  $('machineBox').classList.remove('hidden');
+}
+
+function closeMachineSettings() {
+  $('machineBox').classList.add('hidden');
+}
+
+function saveMachineSettings() {
+  const m = S.project?.machine;
+  if (!m) return;
+  const num = (id, dflt) => {
+    const v = parseFloat($(id).value);
+    return Number.isFinite(v) && v > 0 ? v : dflt;
+  };
+  m.travel_x = num('msTravelX', 200);
+  m.travel_y = num('msTravelY', 200);
+  m.travel_z = num('msTravelZ', 100);
+  m.invert_x = $('msInvX').checked;
+  m.invert_y = $('msInvY').checked;
+  m.invert_z = $('msInvZ').checked;
+  m.invert_e = $('msInvE').checked;
+  m.has_home_switch = $('msHomeSwitch').checked;
+  m.soft_limit = $('msSoftLimit').checked;
+  closeMachineSettings();
+  commit('改机器设置');
+  refreshSummary();
+  draw();
+  // 行程变了要重新适配视野
+  try { fitView(); } catch {}
+  toast('机器设置已保存');
+}
+
+$('btnMachineClose')?.addEventListener('click', closeMachineSettings);
+$('btnMachineSave')?.addEventListener('click', saveMachineSettings);
+$('machineBox')?.addEventListener('click', (e) => {
+  if (e.target.id === 'machineBox') closeMachineSettings();
+});
+
 // ══════════════════════════════════════════════════════════
 // 工具（一套输出参数 + 一个物理通道）
 // ══════════════════════════════════════════════════════════
@@ -3140,6 +3195,7 @@ const ACTIONS = {
   manual: () => window.open('/manual', '_blank'),
   manualBaby: () => window.open('/docs/宝宝级操作手册', '_blank'),
   about: () => showAbout(),
+  machineSettings: () => openMachineSettings(),
 
   // 帮助
   shortcuts: () => showShortcuts(),

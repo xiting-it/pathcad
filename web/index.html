@@ -77,6 +77,8 @@
       <button data-act="connect">连接</button>
       <button data-act="probe">探活</button>
       <div class="menuSep"></div>
+      <button data-act="machineSettings">机器设置…</button>
+      <div class="menuSep"></div>
       <button data-act="send">发送到机器</button>
       <button data-act="stopJob" class="dangerItem">中止发送</button>
       <div class="menuSep"></div>
@@ -838,6 +840,45 @@
       <dt>前端</dt><dd>原生 JS · Canvas 2D（零框架零构建）</dd>
     </dl>
     <button id="btnAboutClose" class="primary close">关闭</button>
+  </div>
+</div>
+
+
+<!-- 机器设置对话框 -->
+<div id="machineBox" class="aboutBox hidden">
+  <div class="aboutCard" style="width:440px">
+    <h2 style="margin-bottom:14px">机器设置</h2>
+
+    <div class="msGroup">
+      <div class="msTitle">行程范围</div>
+      <div class="row"><label>X 行程</label><input id="msTravelX" type="number" min="1" step="1"><span class="unit">mm</span></div>
+      <div class="row"><label>Y 行程</label><input id="msTravelY" type="number" min="1" step="1"><span class="unit">mm</span></div>
+      <div class="row"><label>Z 行程</label><input id="msTravelZ" type="number" min="1" step="1"><span class="unit">mm</span></div>
+    </div>
+
+    <div class="msGroup">
+      <div class="msTitle">轴方向反转</div>
+      <p class="paramHelp xs" style="margin:0 0 8px">
+        电机装反时方向会反。不用拆线，在这里打勾即可。
+      </p>
+      <div class="msChecks">
+        <label class="chk"><input id="msInvX" type="checkbox"> X 轴</label>
+        <label class="chk"><input id="msInvY" type="checkbox"> Y 轴</label>
+        <label class="chk"><input id="msInvZ" type="checkbox"> Z 轴</label>
+        <label class="chk"><input id="msInvE" type="checkbox"> E 轴</label>
+      </div>
+    </div>
+
+    <div class="msGroup" style="margin-bottom:18px">
+      <div class="msTitle">其他</div>
+      <label class="chk"><input id="msHomeSwitch" type="checkbox"> 装了原点开关（任务开头会回零）</label>
+      <label class="chk" style="margin-top:6px"><input id="msSoftLimit" type="checkbox"> 启用软限位检查</label>
+    </div>
+
+    <div style="display:flex;gap:8px">
+      <button id="btnMachineSave" class="primary" style="flex:1">保存</button>
+      <button id="btnMachineClose" style="flex:1">取消</button>
+    </div>
   </div>
 </div>
 

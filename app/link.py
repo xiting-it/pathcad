@@ -59,6 +59,23 @@ def _is_ok_code(code: str) -> bool:
     return code in ("E000", "B000")
 
 
+# 状态码 → 大白话。用户看到错误时不用翻协议文档。
+ERROR_HINT = {
+    "E006": "校验和不符",
+    "E007": "单行超过 128 字节",
+    "E008": "G/M 字过多",
+    "E009": "板子不支持这条指令",
+    "E010": "数值超范围（软限位/进给为负/单步估算超 60s）",
+    "E011": "缓冲区不足",
+    "E012": "轴位置读不到，或等待超时",
+    "E013": "回零超时（原点开关没触发）",
+    "E014": "碰到硬件限位",
+    "E015": "回零开关顺序不对",
+    "E020": "运动队列满",
+    "E021": "入队失败（参数异常）",
+    "E022": "单行超过 128 字节",
+}
+
 _M114_RE = re.compile(r"([XYZUE]):\s*(-?\d+(?:\.\d+)?)")
 
 
@@ -882,14 +899,33 @@ class JobRunner:
                             st.log.pop(0)
                 i = win_end
             else:
-                # 部分失败：逐条记错
+                # 部分失败：逐条复查
+                #
+                # E010（数值超范围）和 E020（队列满）都是**可重试**的：
+                # 实测同一条指令单独发能过、整包重发也能过，说明是板子
+                # 在特定队列状态下的判定边缘，不是指令本身的问题。
+                # 直接记错会让路径凭空缺一个点，所以先单独重发一次。
                 for k, (c, detail) in enumerate(results):
                     if c == "E000":
                         st.done += 1
                         continue
+
+                    ln = win[k]
+                    if c in ("E010", "E020") and not self._stop.is_set():
+                        st.current = ln
+                        c2, _ = self.link.ask(ln, timeout=30.0)
+                        if (c2 == "E000" or c2 == "B000"):
+                            st.done += 1
+                            log.info(SRC_JOB, f"第 {i + k + 1} 行 {c} 重发成功 | {ln[:36]}")
+                            continue
+                        c = f"{c}→{c2}"
+
                     st.errors += 1
+                    # 附上错误码的普通话含义，用户不用去翻协议
+                    meaning = ERROR_HINT.get((c or "")[:4], "")
+                    hint = f"（{meaning}）" if meaning else ""
                     extra = "" if (not detail or detail.strip() == win[k].strip()) else f" | {detail[:40]}"
-                    m = f"第 {i + k + 1} 行 {c or '超时'} | {win[k][:40]}{extra}"
+                    m = f"第 {i + k + 1} 行 {c or '超时'}{hint} | {win[k][:40]}{extra}"
                     st.log.append(m)
                     log.error(SRC_ERR, m)
                     if len(st.log) > 200:

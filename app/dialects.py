@@ -47,6 +47,53 @@ def _f(v: float, nd: int = 3) -> str:
     return s.rstrip("0").rstrip(".") if "." in s else s
 
 
+# ════════════════════════════════════════════════════════
+# IR → 文本
+# ════════════════════════════════════════════════════════
+
+
+def render_instr(d, ins, ctx: Ctx) -> list[str]:
+    """把一条 IR 指令翻译成目标方言的文本行。
+
+    这是 P3 的分界线：编译器只说「移动到 (x,y)」「打开工具 T1」，
+    至于写成 G0/G1/M121/M3/SET_PIN，由方言在这里决定。
+
+    加一种新硬件 = 实现这个分派 + 那几个 emit 方法，不用碰几何和工艺。
+    """
+    kind = ins.kind
+
+    if kind == "comment":
+        return [ins.text] if ins.text else [""]
+
+    if kind == "modal":
+        return [ins.text] if ins.text else []
+
+    if kind == "move":
+        if ins.x is None and ins.y is None and ins.z is not None:
+            return d.move_z(ctx, ins.z, ins.feed or 0.0)
+        x = ins.x if ins.x is not None else 0.0
+        y = ins.y if ins.y is not None else 0.0
+        feed = ins.feed or 0.0
+        if ins.rapid:
+            return d.travel(ctx, x, y, feed)
+        return d.print_move(ctx, x, y, feed)
+
+    if kind in ("tool_on", "tool_off"):
+        ev = IOEvent(io=int(ins.channel or 0), level=int(ins.level or 0), delay_ms=0)
+        return d.valve(ctx, ev)
+
+    if kind == "dwell":
+        return d.dwell(ctx, ins.ms)
+
+    if kind == "wait":
+        return d.wait_motion(ctx)
+
+    if kind == "end":
+        return d.footer(ctx)
+
+    return []
+
+
 # ══════════════════════════════════════════════════════════
 # LCSystem（自研板，UDP）
 # ══════════════════════════════════════════════════════════

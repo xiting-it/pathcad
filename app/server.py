@@ -212,6 +212,24 @@ def api_compile(req: CompileReq):
             "queued_io": d.queued_io,
             "max_line_len": d.max_line_len,
             "dwell": c.dwell_mode,
+            "dwell_unit": getattr(d.caps, "dwell_unit", "ms"),
+            "io_channels": getattr(d.caps, "io_channels", 8),
+        },
+        # 迁移后的工具列表（旧工程在这里被归并成工具）
+        "tools": [
+            {
+                "id": t.id, "name": t.name, "color": t.color,
+                "enabled": t.enabled, "kind": t.kind,
+                "on_channel": t.on_channel, "rise_ms": t.rise_ms,
+                "off_channel": t.close_channel(), "tail_ms": t.tail_ms,
+            }
+            for t in req.project.tools
+        ],
+        # IR 统计：让界面能显示「生成了多少条指令」
+        "ir": {
+            "count": len(c.program.instrs) if c.program else 0,
+            "dwell_ms": c.program.dwell_total_ms() if c.program else 0,
+            "tools_used": c.program.tool_used if c.program else [],
         },
     }
 

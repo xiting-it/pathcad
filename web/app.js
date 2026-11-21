@@ -325,9 +325,10 @@ function drawStroke2D(st) {
   if (selected) {
     ctx.font = '10px ui-monospace, monospace';
     ctx.fillStyle = '#5ad19a';
-    ctx.fillText(`↑${st.start.io}/${st.start.level} ${st.start.delay_ms}ms`, sx + 7, sy - 6);
+    const _t = toolById(st.tool) || (S.project.tools && S.project.tools[0]);
+    if (_t) ctx.fillText(`↑${_t.on_channel}/${_t.on_level} ${_t.rise_ms}ms`, sx + 7, sy - 6);
     ctx.fillStyle = '#ffb454';
-    ctx.fillText(`↓${st.end.io}/${st.end.level} ${st.end.delay_ms}ms`, ex + 7, ey + 14);
+    if (_t) ctx.fillText(`↓${_t.close_channel ? _t.close_channel() : (_t.off_channel ?? _t.on_channel)}/${_t.off_level} ${_t.tail_ms}ms`, ex + 7, ey + 14);
   }
 }
 
@@ -932,8 +933,7 @@ function commitDraft() {
     points: pts,
     closed: pts.length > 2,
     kind: 'contour',
-    start: { io: 0, level: 1, delay_ms: S.project.process.rise_ms ?? 120 },
-    end: { io: 0, level: 0, delay_ms: S.project.process.tail_ms ?? 80 },
+    tool: (S.project.tools && S.project.tools[0]) ? S.project.tools[0].id : 't1',
     source: src,
     _name: shapeName,
     _rot: rot,
@@ -1120,12 +1120,25 @@ function syncProps() {
   panel.classList.remove('hidden');
   $('selTitle').textContent = st._name || '形状';
   $('selMeta').textContent = `${st.points.length} 点`;
-  $('startIo').value = st.start.io;
-  $('startLevel').value = String(st.start.level);
-  $('startDelay').value = st.start.delay_ms;
-  $('endIo').value = st.end.io;
-  $('endLevel').value = String(st.end.level);
-  $('endDelay').value = st.end.delay_ms;
+  // 工具：先填下拉，再显示选中工具的参数
+  const sel = $('strokeTool');
+  if (sel) {
+    ensureTools();
+    const tools = S.project.tools || [];
+    sel.innerHTML = tools.map(t => {
+      const off = t.enabled === false ? '（不输出）' : '';
+      return `<option value="${t.id}">${t.name}${off}</option>`;
+    }).join('');
+    if (st.tool) sel.value = st.tool;
+  }
+  const tl = toolById(st.tool);
+  if (tl) {
+    $('toolName').value = tl.name || '';
+    $('toolOnChannel').value = tl.on_channel ?? 0;
+    $('toolRise').value = tl.rise_ms ?? 120;
+    $('toolTail').value = tl.tail_ms ?? 80;
+    $('toolEnabled').checked = tl.enabled !== false;
+  }
   $('strokeFeed').value = st.feed ?? '';
   $('strokeKind').value = st.kind;
   const rotEl = $('optRotation');
@@ -1287,23 +1300,23 @@ function bindRotation() {
 // ⑤ 延时覆盖到全部起点 / 终点
 // ══════════════════════════════════════════════════════════
 
-/** which: 'start' | 'end'。返回改了多少条。 */
+/** 把所有工具的延时统一改成 ms。which: 'start' | 'end'。
+ *  P3 起延时属于工具而不是笔画，所以这里是改工具、影响使用它的所有笔画。
+ */
 function applyDelayToAll(which, ms) {
   if (!S.project) return 0;
-  let n = 0;
-  for (const L of S.project.layers) {
-    for (const st of L.strokes) {
-      if (which === 'start') st.start.delay_ms = ms;
-      else st.end.delay_ms = ms;
-      n++;
-    }
+  ensureTools();
+  const tools = S.project.tools || [];
+  for (const t of tools) {
+    if (which === 'start') t.rise_ms = ms;
+    else t.tail_ms = ms;
   }
-  if (n) {
-    commit(which === 'start' ? '覆盖所有起点延时' : '覆盖所有终点延时');
+  if (tools.length) {
+    commit(which === 'start' ? '覆盖所有工具的开阀延时' : '覆盖所有工具的关阀延时');
     syncProps();
     draw();
   }
-  return n;
+  return tools.length;
 }
 
 function bindProp(id, fn, label) {
@@ -1316,12 +1329,53 @@ function bindProp(id, fn, label) {
   });
 }
 
-bindProp('startIo', st => st.start.io = clamp(+$('startIo').value | 0, 0, 7), '改起点通道');
-bindProp('startLevel', st => st.start.level = +$('startLevel').value, '改起点电平');
-bindProp('startDelay', st => st.start.delay_ms = Math.max(0, +$('startDelay').value | 0), '改起点延时');
-bindProp('endIo', st => st.end.io = clamp(+$('endIo').value | 0, 0, 7), '改终点通道');
-bindProp('endLevel', st => st.end.level = +$('endLevel').value, '改终点电平');
-bindProp('endDelay', st => st.end.delay_ms = Math.max(0, +$('endDelay').value | 0), '改终点延时');
+// ── 工具面板：改的是工具本身，影响所有用它的笔画 ──
+function bindToolField(id, fn, label) {
+  const el = $(id);
+  if (!el) return;
+  const ev = el.tagName === 'SELECT' || el.type === 'checkbox' ? 'change' : 'input';
+  el.addEventListener(ev, () => {
+    const st = S.sel ? findStroke(S.sel) : null;
+    if (!st) return;
+    const t = toolById(st.tool);
+    if (!t) return;
+    fn(t);
+    draw();
+    commit(label, 'tool:' + id + ':' + t.id);
+  });
+}
+
+bindToolField('toolName', t => { t.name = $('toolName').value || '未命名'; refreshShapeList(); }, '改工具名');
+bindToolField('toolOnChannel', t => { t.on_channel = clamp(+$('toolOnChannel').value | 0, 0, 7); draw(); }, '改工具通道');
+bindToolField('toolRise', t => { t.rise_ms = Math.max(0, +$('toolRise').value | 0); }, '改开阀延时');
+bindToolField('toolTail', t => { t.tail_ms = Math.max(0, +$('toolTail').value | 0); }, '改关阀延时');
+bindToolField('toolEnabled', t => { t.enabled = $('toolEnabled').checked; refreshShapeList(); }, '切换工具输出');
+
+// 笔画换工具
+$('strokeTool')?.addEventListener('change', () => {
+  const st = S.sel ? findStroke(S.sel) : null;
+  if (!st) return;
+  st.tool = $('strokeTool').value;
+  syncProps();
+  draw();
+  commit('换工具', 'toolpick:' + st.id);
+});
+
+// 新建工具
+$('btnNewTool')?.addEventListener('click', () => {
+  if (!S.project) return;
+  ensureTools();
+  const n = S.project.tools.length;
+  const t = makeTool(`t${n + 1}`, `工具 ${n + 1}`, Math.min(n, 7), 120, 80, n);
+  S.project.tools.push(t);
+  const st = S.sel ? findStroke(S.sel) : null;
+  if (st) st.tool = t.id;
+  commit('新建工具');
+  syncProps();
+  refreshShapeList();
+  draw();
+  toast(`已新建「${t.name}」`);
+});
 bindProp('strokeFeed', st => st.feed = $('strokeFeed').value ? +$('strokeFeed').value : null, '改笔画速度');
 bindProp('strokeKind', st => { st.kind = $('strokeKind').value; refreshShapeList(); }, '改笔画类型');
 
@@ -1736,8 +1790,7 @@ $('btnFill').addEventListener('click', async () => {
       points: p.map(([x, y]) => ({ x, y })),
       closed: false,
       kind: 'fill',
-      start: { io: 0, level: 1, delay_ms: S.project.process.rise_ms ?? 120 },
-      end: { io: 0, level: 0, delay_ms: S.project.process.tail_ms ?? 80 },
+      tool: (S.project.tools && S.project.tools[0]) ? S.project.tools[0].id : 't1',
       source: null,
       _name: '填充线',
     }));
@@ -2433,6 +2486,84 @@ function applyProject(p, { record = false, label = '载入工程' } = {}) {
   }
 }
 
+// ══════════════════════════════════════════════════════════
+// 工具（一套输出参数 + 一个物理通道）
+// ══════════════════════════════════════════════════════════
+
+const TOOL_COLORS = ['#4ea3ff', '#ffb454', '#90d19a', '#c78cff', '#ff7a7a', '#5ad0d0'];
+
+function makeTool(id, name, channel, rise, tail, idx = 0) {
+  return {
+    id, name, color: TOOL_COLORS[idx % TOOL_COLORS.length],
+    enabled: true, visible: true, kind: 'valve',
+    on_channel: channel, on_level: 1, rise_ms: rise,
+    off_channel: null, off_level: 0, tail_ms: tail,
+  };
+}
+
+/** 保证工程有工具、笔画都指向有效工具（和 backend 的 ensure_tools 对齐）。 */
+function ensureTools() {
+  const p = S.project;
+  if (!p) return;
+  if (!Array.isArray(p.tools) || !p.tools.length) {
+    // 旧工程：按笔画里残留的 start/end 归类
+    const combos = new Map();
+    const loose = [];
+    for (const L of p.layers || []) {
+      for (const st of L.strokes || []) {
+        if (st.start && st.end) {
+          const k = [st.start.io, st.start.level, st.start.delay_ms,
+                     st.end.io, st.end.level, st.end.delay_ms].join(',');
+          if (!combos.has(k)) combos.set(k, { strokes: [], s: st.start, e: st.end });
+          combos.get(k).strokes.push(st);
+        } else {
+          loose.push(st);
+        }
+      }
+    }
+    const made = [];
+    let i = 0;
+    for (const { strokes, s: st, e: en } of combos.values()) {
+      const t = makeTool(`t${i + 1}`, i === 0 ? '主挤出' : `工具 ${i + 1}`,
+                         st.io, st.delay_ms, en.delay_ms, i);
+      t.on_level = st.level;
+      t.off_level = en.level;
+      if (en.io !== st.io) t.off_channel = en.io;
+      made.push(t);
+      for (const x of strokes) { x.tool = t.id; delete x.start; delete x.end; }
+      i++;
+    }
+    if (!made.length) {
+      made.push(makeTool('t1', '主挤出', 0,
+                         p.process?.rise_ms ?? 120, p.process?.tail_ms ?? 80, 0));
+    }
+    p.tools = made;
+    const fb = made[0].id;
+    for (const x of loose) { if (!x.tool) x.tool = fb; delete x.start; delete x.end; }
+  }
+  const ids = new Set(p.tools.map(t => t.id));
+  const fb = p.tools[0].id;
+  for (const L of p.layers || []) {
+    for (const st of L.strokes || []) {
+      if (!ids.has(st.tool)) st.tool = fb;
+      delete st.start; delete st.end;
+    }
+  }
+}
+
+function toolById(id) {
+  return (S.project?.tools || []).find(t => t.id === id) || S.project?.tools?.[0] || null;
+}
+
+/** 当前选中笔画用的工具 */
+function currentTool() {
+  const st = S.sel ? findStroke(S.sel) : null;
+  if (!st) return null;
+  return toolById(st.tool);
+}
+
+// ══════════════════════════════════════════════════════════
+
 function blankProject() {
   return {
     version: 1,
@@ -2448,6 +2579,8 @@ function blankProject() {
       rise_ms: 120, tail_ms: 80, lift_z: 0.3, lift_feed: 3000,
       line_width: 0.4, layer_height: 0.4, min_segment_len: 1.5,
     },
+    // 工具：一套输出参数 + 一个物理通道。笔画通过 tool 字段引用它。
+    tools: [makeTool('t1', '主挤出', 0, 120, 80)],
     layers: [{ id: 'L1', z: 0.4, repeat: 1, z_step: 0.4, overrides: {}, strokes: [], visible: true }],
     calibration_profile_id: null,
   };
@@ -2527,8 +2660,7 @@ $('fileSvg').addEventListener('change', async e => {
         points: sp.map(([x, y]) => ({ x, y })),
         closed,
         kind: 'contour',
-        start: { io: 0, level: 1, delay_ms: S.project.process.rise_ms ?? 120 },
-        end: { io: 0, level: 0, delay_ms: S.project.process.tail_ms ?? 80 },
+        tool: (S.project.tools && S.project.tools[0]) ? S.project.tools[0].id : 't1',
         source: { type: 'svg', pts: sp.map(([x, y]) => ({ x, y })) },
         _name: closed ? 'SVG 闭合路径' : 'SVG 路径',
       });
@@ -2616,8 +2748,7 @@ $('fileMesh').addEventListener('change', async e => {
         closed: p.length >= 3 &&
           Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) < 0.01,
         kind: 'contour',
-        start: { io: 0, level: 1, delay_ms: 120 },
-        end: { io: 0, level: 0, delay_ms: 80 },
+        tool: 't1',
         source: null,
         _name: `层 ${i + 1} 轮廓`,
       })),

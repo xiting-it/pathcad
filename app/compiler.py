@@ -14,8 +14,30 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .dialects import Ctx, Dialect, _f
-from .model import IOEvent, Layer, Machine, Process, Project, Stroke
+from .dialects import Ctx, Dialect, _f, render_instr
+from .ir import (
+    KIND_COMMENT,
+    KIND_DWELL,
+    KIND_MOVE,
+    Instr,
+    Program,
+    comment,
+    dwell,
+    modal,
+    move as ir_move,
+    tool_off,
+    tool_on,
+)
+from .model import (
+    IOEvent,
+    Layer,
+    Machine,
+    Process,
+    Project,
+    Stroke,
+    migrate_project,
+    tool_index,
+)
 
 
 @dataclass
@@ -30,6 +52,8 @@ class Compiled:
     # "gcode" 模式延时已写进 text，"none" 模式直接丢弃。
     delays: list[float] = field(default_factory=list)
     dwell_mode: str = "gcode"
+    # 结构化指令序列（P3 引入）。方言文本是它的渲染结果。
+    program: Program | None = None
 
     def __post_init__(self):
         if not self.delays:
@@ -96,82 +120,86 @@ def compile_project(
     safe_z: float | None = None,
     emit_ensure_closed: bool = True,
 ) -> Compiled:
-    """把整个工程编译成 G-code 文本。
+    """把整个工程编译成指令序列（IR），再渲染成目标方言的文本。
+
+    P3 起的工作方式：
+      ① 笔画 → IR（与控制器无关：移动 / 开工具 / 驻留 / 关工具）
+      ② IR → 方言文本（每种板子自己决定怎么说）
 
     延时有两种落法（见 model.DialectCaps.dwell）：
-      - "gcode"：dialect.dwell() 会返回 G4 行，延时就在文本里
-      - "host" ：dialect.dwell() 返回空，延时要记在 delays[] 里，
-                 由下发器在「等 E000 之后」sleep
-      - "none" ：延时直接丢弃
+      - "gcode"：渲染成 G4 行，延时就在文本里
+      - "host" ：不渲染，延时要记在 delays[] 里，由下发器 sleep
+      - "none" ：直接丢弃
     """
+    # 保证有工具、笔画都指向有效工具（旧工程在这里被迁移）
+    migrate_project(project)
+    tools = tool_index(project)
+    default_tool = project.tools[0]
+
     m = project.machine
     p = project.process
-    out: list[str] = []
-    delays: list[float] = []
+    prog = Program()
     warnings: list[str] = []
     stroke_n = 0
     total_len = 0.0
+    used_tools: list[str] = []
 
     dwell_mode = getattr(getattr(dialect, "caps", None), "dwell", None) or "gcode"
+    ctx = Ctx(machine=m, process=p, z=0.0)
 
-    # IO 状态跟踪：只在电平真的变化时才发指令。
-    # 网口板每条指令约 200ms 开销，而每条笔画开头一次的 M121 U0 V0
-    # 大部分是冗余的（上一条笔画结束时已经关过），去掉能省 10~15% 指令数。
+    # 输出通道状态：只在电平真的变化时才发指令。
+    # 每条笔画开头一次「确保关闭」大部分是冗余的，去掉能省 10~15% 指令数。
     io_level: dict[int, int] = {}
 
-    def emit(lines: list[str], delay_s: float = 0.0):
-        """追加若干行；把这条延时挂到最后一行上（host 模式用）。"""
-        if not lines:
-            return
-        out.extend(lines)
-        for i in range(len(lines)):
-            delays.append(delay_s if i == len(lines) - 1 else 0.0)
+    def emit(ins: Instr) -> None:
+        prog.append(ins)
 
-    def emit_valve(io: int, level: int, force: bool = False):
-        """开/关阀，带状态去重。"""
-        if not force and io_level.get(io, 0) == level:
-            return
-        emit(dialect.valve(ctx, IOEvent(io=io, level=level, delay_ms=0)))
-        io_level[io] = level
+    def emit_text(text: str = "") -> None:
+        emit(comment(text))
 
-    def emit_dwell(ms: int):
-        """按方言能力处理延时。"""
-        if ms <= 0:
-            return
-        if dwell_mode == "gcode":
-            # 方言自己生成 G4 行
-            emit(dialect.dwell(ctx, ms))
-        elif dwell_mode == "host":
-            # 不生成 G4，延时交给下发器；挂到当前最后一行上
-            if delays:
-                delays[-1] += ms / 1000.0
-            else:
-                # 还没有任何行，先塞个空行承载延时
-                emit(["; dwell"], ms / 1000.0)
-        # none 模式：丢弃
+    def emit_tool_on(tool) -> None:
+        io_level[tool.on_channel] = tool.on_level
+        if tool.id not in used_tools:
+            used_tools.append(tool.id)
+        emit(tool_on(tool_id=tool.id, channel=tool.on_channel, level=tool.on_level))
 
-    ctx = Ctx(machine=m, process=p, z=0.0)
-    emit(dialect.header(ctx))
+    def emit_tool_off(tool, force: bool = False) -> None:
+        ch = tool.close_channel()
+        if not force and io_level.get(ch) == tool.off_level:
+            return
+        io_level[ch] = tool.off_level
+        emit(tool_off(tool_id=tool.id, channel=ch, level=tool.off_level))
+
+    def emit_dwell(ms: int) -> None:
+        if ms > 0:
+            emit(dwell(ms))
+
+    # 头部：方言自己决定要哪些模态指令
+    for line in dialect.header(ctx):
+        emit(modal(line))
 
     lift = p.lift_z
     safe = safe_z if safe_z is not None else max(m.travel_z, lift + 1.0)
-
-    # 先抬到安全高度
-    emit([f"; lift to safe z={_f(safe)}"])
-    emit(dialect.move_z(ctx, safe, p.lift_feed))
+    emit_text(f"; lift to safe z={_f(safe)}")
+    emit(ir_move(z=safe, feed=p.lift_feed, rapid=True))
 
     for layer in project.layers:
         if not layer.visible or not layer.strokes:
             continue
         for rep in range(layer.repeat):
             z = layer.z + rep * layer.z_step
-            emit([""])
-            emit([f"; === layer {layer.id} rep {rep + 1}/{layer.repeat} z={_f(z)} ==="])
+            emit_text("")
+            emit_text(f"; === layer {layer.id} rep {rep + 1}/{layer.repeat} z={_f(z)} ===")
+
             for st in layer.strokes:
+                tool = tools.get(st.tool) or default_tool
+                if not tool.enabled:
+                    continue
+
                 eff = _effective(p, layer, st)
                 feed = st.feed or m.feed_default
-                rise = int(eff["rise_ms"])
-                tail = int(eff["tail_ms"])
+                rise = int(tool.rise_ms)
+                tail = int(tool.tail_ms)
                 lz = float(eff["lift_z"])
                 lf = float(eff["lift_feed"])
 
@@ -180,7 +208,6 @@ def compile_project(
                     warnings.append(f"stroke {st.id}: 点数不足 2，跳过")
                     continue
 
-                # 软限位检查
                 for (x, y) in pts:
                     if abs(x) > m.travel_x or abs(y) > m.travel_y:
                         warnings.append(
@@ -194,46 +221,36 @@ def compile_project(
                 seg_len = sum(_dist(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
                 total_len += seg_len
 
-                emit([""])
-                emit([f"; --- stroke {st.id} ({st.kind}) len={_f(seg_len, 2)}mm ---"])
+                emit_text("")
+                emit_text(f"; --- stroke {st.id} ({st.kind}) tool={tool.id} "
+                          f"len={_f(seg_len, 2)}mm ---")
 
-                # ① 确保阀关（幂等，防上一条异常遗留）
-                # 用状态去重：上一条笔画结束时已经关过就不重复发。
-                # 网口板每条指令 200ms 开销，这一项能省 10~15% 指令数。
-                if emit_ensure_closed and st.start.level != 0:
-                    emit_valve(st.start.io, 0)
+                # ① 确保工具关（幂等，防上一条异常遗留）
+                if emit_ensure_closed and tool.on_level != 0:
+                    emit_tool_off(tool)
 
                 # ②③ 空驶到起点 + 降到位
-                #
-                # ⚠️ 不能把「抬针」和「空驶」合并成一条斜线：
+                # ⚠️ 不能把「抬针」和「空驶」合并成斜线：
                 # 那样针头会贴着工件表面斜着蹭过去，撞坏已打印的格栅。
-                # 正确做法是 **先竖直抬到安全高度，再水平空驶，最后竖直落下**，
-                # 也就是必须保持两段（甚至三段）独立动作。
-                #
-                # 唯一能省的是：如果上一条笔画末尾已经抬到 z+lz，
-                # 而 z+lz 已经高于本层的安全高度，就不用再抬一次。
-                emit(dialect.travel(ctx, pts[0][0], pts[0][1], m.feed_rapid))
-                emit(dialect.move_z(ctx, z, lf))
+                emit(ir_move(x=pts[0][0], y=pts[0][1], feed=m.feed_rapid, rapid=True))
+                emit(ir_move(z=z, feed=lf, rapid=True))
 
-                # ④ 开阀
-                emit_valve(st.start.io, st.start.level)
-
-                # ⑤ 上升延时
+                # ④ 开工具  ⑤ 上升延时
+                emit_tool_on(tool)
                 emit_dwell(rise)
 
                 # ⑥ 打印段
-                # Δ = v(mm/s) × t(s) = (feed/60) × (tail/1000)
                 back = (feed / 60.0) * (tail / 1000.0)
-                end = pts[-1]
+                end_pt = pts[-1]
 
                 if dialect.queued_io:
-                    # ── IO 随运动排队（Klipper）：不需要切一刀 ──
+                    # IO 随运动排队：不需要切一刀
                     for i in range(1, len(pts)):
-                        emit(dialect.print_move(ctx, pts[i][0], pts[i][1], feed))
-                    emit_valve(st.end.io, st.end.level)
+                        emit(ir_move(x=pts[i][0], y=pts[i][1], feed=feed))
+                    emit_tool_off(tool, force=True)
                     emit_dwell(tail)
                 elif back > 1e-6:
-                    # ── IO 不排队（Marlin/自研板）：终点前切一刀停车关阀 ──
+                    # IO 不排队：终点前切一刀停车关阀
                     cut, cut_idx = _backtrack(pts, back)
                     if cut_idx == 0:
                         warnings.append(
@@ -241,45 +258,71 @@ def compile_project(
                             f"{_f(back, 3)}mm，切点钳到起点"
                         )
                     for i in range(1, cut_idx):
-                        emit(dialect.print_move(ctx, pts[i][0], pts[i][1], feed))
-                    emit(dialect.print_move(ctx, cut[0], cut[1], feed))
-                    # ⑦ 关阀（此时停在 cut 点）
-                    emit_valve(st.end.io, st.end.level)
-                    # ⑧ 拖尾驻留
+                        emit(ir_move(x=pts[i][0], y=pts[i][1], feed=feed))
+                    emit(ir_move(x=cut[0], y=cut[1], feed=feed))
+                    emit_tool_off(tool, force=True)
                     emit_dwell(tail)
-                    # ⑨ 走完剩余 Δ
-                    emit(dialect.print_move(ctx, end[0], end[1], feed))
+                    emit(ir_move(x=end_pt[0], y=end_pt[1], feed=feed))
                 else:
                     for i in range(1, len(pts)):
-                        emit(dialect.print_move(ctx, pts[i][0], pts[i][1], feed))
-                    emit_valve(st.end.io, st.end.level)
+                        emit(ir_move(x=pts[i][0], y=pts[i][1], feed=feed))
+                    emit_tool_off(tool, force=True)
                     emit_dwell(tail)
 
-                # ⑩ 抬针断料
-                # 抬针有两个作用，都不能省：
-                #   1) 断料：抬起时针头离开工件，余料自然断开
-                #   2) 让下一次空驶有安全间隙，不会蹭到已打印的格栅
-                # 所以「抬针 → 空驶 → 落针」必须是三段独立动作，
-                # 合并成斜线会让针头贴着工件表面蹭过去。
-                emit(dialect.move_z(ctx, z + lz, lf))
+                # ⑩ 抬针断料（不可省，理由见上）
+                emit(ir_move(z=z + lz, feed=lf, rapid=True))
 
-    emit([""])
-    emit(dialect.footer(ctx))
+    emit(comment(""))
+    for line in dialect.footer(ctx):
+        emit(modal(line))
+
+    # ── IR → 文本 ──
+    out: list[str] = []
+    delays: list[float] = []
+    pending_ms = 0
+
+    for ins in prog.instrs:
+        if ins.kind == KIND_DWELL:
+            if dwell_mode == "gcode":
+                rendered = render_instr(dialect, ins, ctx)
+                out.extend(rendered)
+                delays.extend([0.0] * len(rendered))
+            elif dwell_mode == "host":
+                pending_ms += ins.ms
+            # none：丢弃
+            continue
+
+        rendered = render_instr(dialect, ins, ctx)
+        if not rendered:
+            continue
+        out.extend(rendered)
+        d = [0.0] * len(rendered)
+        if pending_ms:
+            d[-1] += pending_ms / 1000.0
+            pending_ms = 0
+        delays.extend(d)
 
     # 行长度校验
-    if dialect.max_line_len:
+    if getattr(dialect, "max_line_len", 0):
         for ln in out:
             if len(ln) > dialect.max_line_len:
-                warnings.append(f"行超长 {len(ln)}B > {dialect.max_line_len}B: {ln[:40]}...")
+                warnings.append(
+                    f"行超长 {len(ln)}B > {dialect.max_line_len}B: {ln[:40]}..."
+                )
+
+    prog.stroke_count = stroke_n
+    prog.path_length = total_len
+    prog.tool_used = used_tools
 
     return Compiled(
-        text="\n".join(out) + "\n",
+        text=chr(10).join(out) + chr(10),
         lines=out,
         stroke_count=stroke_n,
         path_length=total_len,
         warnings=warnings,
         delays=delays,
         dwell_mode=dwell_mode,
+        program=prog,
     )
 
 

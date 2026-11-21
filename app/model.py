@@ -22,6 +22,37 @@ class IOEvent(BaseModel):
     delay_ms: int = Field(0, ge=0, le=10000, description="事件之后驻留的毫秒数")
 
 
+class Tool(BaseModel):
+    """工具 = 一套输出参数 + 一个物理通道。
+
+    这是 P3 引入的核心抽象：笔画不再各自携带 IO 参数，而是引用一个工具。
+    好处是换材料只加/改工具，不用逐条改笔画；以后接激光也只是换 kind 和参数。
+
+    流体（kind="valve"）用 on/off 通道 + 两端延时；
+    激光（kind="laser"，预留）会用 power/frequency，届时在 params 里扩展。
+    """
+
+    id: str
+    name: str = "主挤出"
+    color: str = "#4ea3ff"          # 界面显示色，也用于画布着色
+    enabled: bool = True            # Output 开关：关掉这个工具，它的笔画不参与输出
+    visible: bool = True
+    kind: Literal["valve", "laser"] = "valve"
+
+    # 开
+    on_channel: int = Field(0, ge=0, le=63)
+    on_level: int = Field(1, ge=0, le=1)
+    rise_ms: int = Field(120, ge=0, le=10000, description="开阀后驻留")
+
+    # 关（默认和开同通道）
+    off_channel: int | None = Field(None, ge=0, le=63, description="None = 同 on_channel")
+    off_level: int = Field(0, ge=0, le=1)
+    tail_ms: int = Field(80, ge=0, le=10000, description="关阀后驻留")
+
+    def close_channel(self) -> int:
+        return self.off_channel if self.off_channel is not None else self.on_channel
+
+
 class Point(BaseModel):
     x: float
     y: float
@@ -69,8 +100,12 @@ class Stroke(BaseModel):
     closed: bool = False
     feed: float | None = Field(None, gt=0, description="mm/min，覆盖全局")
     kind: Literal["contour", "fill", "travel"] = "contour"
-    start: IOEvent = Field(default_factory=lambda: IOEvent(level=1))
-    end: IOEvent = Field(default_factory=lambda: IOEvent(level=0))
+    # 新：引用工具 id。None 表示用工程里的第一个工具（迁移期的兜底）
+    tool: str | None = None
+    # 旧字段：P3 之前每条笔画各自带两端事件。仅为读取旧工程保留，
+    # 迁移时会被折算成 tool，之后不再写回。
+    start: IOEvent | None = None
+    end: IOEvent | None = None
     source: Source | None = None
 
     @field_validator("points")
@@ -102,10 +137,15 @@ class Machine(BaseModel):
 
 
 class Process(BaseModel):
-    """全局工艺默认值。层和笔画可以覆盖。"""
+    """全局工艺配置。
 
-    rise_ms: int = Field(120, ge=0, description="开阀后驻留")
-    tail_ms: int = Field(80, ge=0, description="关阀后驻留")
+    ⚠️ P3 起 rise_ms / tail_ms 属于**工具**，不再属于全局。
+    这里保留这两个字段只为了让旧工程读得进来——迁移时用它们初始化工具，
+    之后编译不再读 Process 的这两个值。
+    """
+
+    rise_ms: int = Field(120, ge=0, description="（旧）迁移时用作工具初值")
+    tail_ms: int = Field(80, ge=0, description="（旧）迁移时用作工具初值")
     lift_z: float = Field(0.3, ge=0, description="抬针高度")
     lift_feed: float = Field(3000.0, gt=0)
     line_width: float = Field(0.4, gt=0, description="线宽 mm，3D 预览用")
@@ -142,6 +182,8 @@ class Project(BaseModel):
     name: str = "untitled"
     machine: Machine = Field(default_factory=Machine)
     process: Process = Field(default_factory=Process)
+    # 工具列表。为空时由 ensure_tools() 自动补一个默认工具。
+    tools: list[Tool] = Field(default_factory=list)
     layers: list[Layer] = Field(default_factory=list)
     calibration_profile_id: str | None = None
 
@@ -186,3 +228,128 @@ DIALECTS: dict[str, DialectCaps] = {
     "f1": DialectCaps(queued_io=True, arcs=False, max_line_len=89, dwell_unit="ms",
                       dwell="none"),
 }
+
+
+# ══════════════════════════════════════════════════════════
+# 工具：默认值、旧工程迁移
+# ══════════════════════════════════════════════════════════
+
+# 新工具的默认配色（按创建顺序循环取）
+TOOL_COLORS = [
+    "#4ea3ff",  # 蓝
+    "#ffb454",  # 橙
+    "#90d19a",  # 绿
+    "#c78cff",  # 紫
+    "#ff7a7a",  # 红
+    "#5ad0d0",  # 青
+]
+
+
+def make_default_tool(
+    index: int = 0,
+    *,
+    channel: int = 0,
+    rise_ms: int = 120,
+    tail_ms: int = 80,
+    name: str | None = None,
+) -> Tool:
+    """造一个工具。index 决定 id 和默认配色。"""
+    return Tool(
+        id=f"t{index + 1}",
+        name=name or ("主挤出" if index == 0 else f"工具 {index + 1}"),
+        color=TOOL_COLORS[index % len(TOOL_COLORS)],
+        on_channel=channel,
+        rise_ms=rise_ms,
+        tail_ms=tail_ms,
+    )
+
+
+def ensure_tools(project: "Project") -> "Project":
+    """保证工程至少有一个工具，且每条笔画都指向有效工具。
+
+    三种情况：
+      1. 没有工具、笔画也没有旧字段 → 补一个默认工具，全部指向它
+      2. 没有工具、笔画带旧 start/end → 按参数组合归类，生成若干工具
+      3. 已有工具 → 只修那些 tool 为 None 或指向不存在工具的笔画
+    """
+    if not project.tools:
+        # 收集旧字段的参数组合，决定要生成几个工具
+        combos: dict[tuple, list[Stroke]] = {}
+        loose: list[Stroke] = []
+        for layer in project.layers:
+            for st in layer.strokes:
+                if st.start is not None and st.end is not None:
+                    key = (
+                        st.start.io, int(st.start.level), st.start.delay_ms,
+                        st.end.io, int(st.end.level), st.end.delay_ms,
+                    )
+                    combos.setdefault(key, []).append(st)
+                else:
+                    loose.append(st)
+
+        if combos:
+            made: list[Tool] = []
+            for i, (key, strokes) in enumerate(combos.items()):
+                on_io, on_lv, rise, off_io, off_lv, tail = key
+                t = make_default_tool(
+                    i,
+                    channel=on_io,
+                    rise_ms=rise,
+                    tail_ms=tail,
+                    name="主挤出" if i == 0 else f"工具 {i + 1}",
+                )
+                t.on_level = on_lv
+                t.off_level = off_lv
+                if off_io != on_io:
+                    t.off_channel = off_io
+                made.append(t)
+                for st in strokes:
+                    st.tool = t.id
+            project.tools = made
+            default_id = made[0].id
+        else:
+            t = make_default_tool(0, rise_ms=project.process.rise_ms,
+                                  tail_ms=project.process.tail_ms)
+            project.tools = [t]
+            default_id = t.id
+
+        for st in loose:
+            st.tool = default_id
+        return project
+
+    # 已有工具：修补悬空引用
+    ids = {t.id for t in project.tools}
+    fallback = project.tools[0].id
+    for layer in project.layers:
+        for st in layer.strokes:
+            if st.tool not in ids:
+                st.tool = fallback
+    return project
+
+
+def tool_index(project: "Project") -> dict[str, Tool]:
+    """id → Tool 的索引。"""
+    return {t.id: t for t in project.tools}
+
+
+def migrate_project(p: "Project") -> "Project":
+    """把任意来源的工程整理成当前格式。幂等，可重复调用。
+
+    做三件事：
+      1. 补 app / app_version 标识
+      2. 补齐工具并把笔画指过去
+      3. 清掉笔画上的旧 start/end 字段（数据已经折进工具）
+    """
+    if not p.app:
+        p.app = "cam-b"
+        p.app_version = None
+        p._migrated = True  # type: ignore[attr-defined]
+
+    ensure_tools(p)
+
+    for layer in p.layers:
+        for st in layer.strokes:
+            if st.start is not None or st.end is not None:
+                st.start = None
+                st.end = None
+    return p

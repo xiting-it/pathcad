@@ -494,35 +494,30 @@
       </div>
 
       <div class="ioCard">
-        <div class="ioCardHead"><span class="dot open"></span>起点 · 开阀</div>
+        <div class="ioCardHead"><span class="dot open"></span>工具</div>
+        <div class="row"><label>用哪个</label>
+          <select id="strokeTool" class="wide"></select>
+          <button id="btnNewTool" class="tinyBtn" title="新建一个工具（换材料/换喷头时用）">+</button>
+        </div>
+        <div class="row"><label>名称</label>
+          <input id="toolName" type="text" placeholder="主挤出">
+        </div>
         <div class="row"><label>通道</label>
-          <input id="startIo" type="number" value="0" min="0" max="7" step="1">
+          <input id="toolOnChannel" type="number" min="0" max="7" step="1">
           <span class="unit">0–7</span>
         </div>
-        <div class="row"><label>电平</label>
-          <select id="startLevel"><option value="1">高（开）</option><option value="0">低（关）</option></select>
-          <span class="unit"></span>
-        </div>
-        <div class="row"><label>延时</label>
-          <input id="startDelay" type="number" value="120" step="10" min="0">
+        <div class="row"><label>开阀延时</label>
+          <input id="toolRise" type="number" step="10" min="0">
           <span class="unit">ms</span>
         </div>
-      </div>
-
-      <div class="ioCard">
-        <div class="ioCardHead"><span class="dot close"></span>终点 · 关阀</div>
-        <div class="row"><label>通道</label>
-          <input id="endIo" type="number" value="0" min="0" max="7" step="1">
-          <span class="unit">0–7</span>
-        </div>
-        <div class="row"><label>电平</label>
-          <select id="endLevel"><option value="0">低（关）</option><option value="1">高（开）</option></select>
-          <span class="unit"></span>
-        </div>
-        <div class="row"><label>延时</label>
-          <input id="endDelay" type="number" value="80" step="10" min="0">
+        <div class="row"><label>关阀延时</label>
+          <input id="toolTail" type="number" step="10" min="0">
           <span class="unit">ms</span>
         </div>
+        <label class="chk" style="margin-top:6px">
+          <input id="toolEnabled" type="checkbox"> 参与输出
+        </label>
+        <p class="paramHelp xs">改工具参数会影响所有用它的笔画</p>
       </div>
 
       <div class="row"><label>速度覆盖</label>

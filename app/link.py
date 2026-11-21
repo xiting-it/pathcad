@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import math
+import re
 import socket
 import threading
 import time
@@ -56,6 +57,18 @@ def _is_result_code(text: str) -> bool:
 def _is_ok_code(code: str) -> bool:
     """是不是成功码（E000 / B000）。"""
     return code in ("E000", "B000")
+
+
+_M114_RE = re.compile(r"([XYZUE]):\s*(-?\d+(?:\.\d+)?)")
+
+
+def parse_m114(detail: str) -> dict[str, float]:
+    """从 M114 的详情里解析坐标。
+
+    详情形如 。
+    注意字母和数字之间有冒号，不能按空格切分——那样 X 和 0.000 会被切成两段。
+    """
+    return {k: float(v) for k, v in _M114_RE.findall(detail or "")}
 
 
 def _est_move_ms(line: str, cur_speed: float, accel: float = 300.0) -> float:
@@ -680,6 +693,8 @@ class JobState:
     finished_at: float = 0.0
     aborted: bool = False
     log: list[str] = field(default_factory=list)
+    # 最近一次读到的机器坐标（中止后排空队列时会刷新）
+    last_position: dict | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -758,11 +773,56 @@ class JobRunner:
         self.state.aborted = True
         log.warn(SRC_JOB, "收到中止请求")
 
+    def drain(self, reason: str = "") -> tuple[bool, str]:
+        """等板子把已在队列里的命令全部执行完。
+
+        为什么必须有这一步：
+          协议里没有「清空队列」指令，`stop()` 只是让上位机停止**发送**，
+          板子队列里最多还有 8 条 + 在途 1 包（最多 batch_size 条）会继续执行。
+          单条约 0.5 秒，最坏要 7 秒才真正停下。
+
+          如果这时直接重发，新命令会排在旧命令后面，机器动作变成
+          「旧任务尾巴 + 新任务开头」，位置也对不上。
+
+        `M400` 的语义正好是「等待运动停止」，而且它自己进队列，
+        所以回码就代表它前面的命令全部执行完了。
+        """
+        if not self.link.sock:
+            return False, "未连接"
+        if reason:
+            log.info(SRC_JOB, f"等待队列排空（{reason}）")
+        code, detail = self.link.ask("M400", timeout=120.0)
+        if code in ("E000", "B000"):
+            # 队列空了，机器位置可能已经变了，重新读一次对齐
+            self.resync_position()
+            log.info(SRC_JOB, "队列已排空")
+            return True, "队列已排空"
+        msg = f"{code or '超时'} {detail}".strip()
+        log.warn(SRC_JOB, f"排空未确认：{msg}")
+        return False, msg
+
+    def resync_position(self) -> dict | None:
+        """重新读一次机器坐标，让上层的认知和实际位置一致。"""
+        if not self.link.sock:
+            return None
+        code, detail = self.link.ask("M114", timeout=10.0)
+        if code not in ("E000", "B000"):
+            return None
+        pos = parse_m114(detail)
+        if pos:
+            self.state.last_position = pos
+        return pos
+
     def _run(self, lines: list[str], delays: list[float] | None = None):
         st = self.state
         last_report = 0
         n = len(lines)
         delays = delays or [0.0] * n
+
+        # ── 发送前先排空 ──
+        # 上一次可能是中止/超时结束的，板子队列里还留着命令。
+        # 不清掉就直接发，新任务会排在旧命令后面，动作和坐标全乱。
+        self.drain("发送前清空残留")
 
         i = 0
         while i < n:
@@ -857,6 +917,16 @@ class JobRunner:
                     if self._stop.is_set():
                         break
                     time.sleep(min(0.02, max(0.0, deadline - time.time())))
+
+        # ── 中止后排空队列 ──
+        # 中止只是让上位机停止发送，板子队列里还有最多 8 条 + 在途一包会继续执行。
+        # 不排空的话，用户马上点「重新发送」就会新旧命令混在一起。
+        # 这里挡住，直到队列真的空了才允许下一次发送。
+        if st.aborted:
+            abort_msg = st.message          # 先记住「已中止（第 N/M 行）」
+            st.message = "正在停止：等待机器执行完已排队的指令…"
+            ok, _ = self.drain("中止后清空队列")
+            st.message = abort_msg + ("，队列已清空" if ok else "，但队列清空未确认")
 
         st.running = False
         st.finished_at = time.time()

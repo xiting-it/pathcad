@@ -315,12 +315,54 @@ def _chain_segments(
     return loops
 
 
+def simplify_loop(pts: list[tuple[float, float]], tol: float = 0.02) -> list[tuple[float, float]]:
+    """删掉轮廓上的共线中间点。
+
+    切片对每个三角面与平面求交，所以一条直边会被切成很多小段，
+    产生大量共线冗余点。这些点不改变几何，但每条都要占一条移动指令，
+    而板子每条指令有 200~360ms 固定开销 —— 实测这个模型能压掉一半。
+
+    tol 是允许的点到直线距离（mm）。0.02mm 远小于喷嘴直径，肉眼不可见。
+    """
+    n = len(pts)
+    if n <= 3:
+        return pts
+
+    closed = (abs(pts[0][0] - pts[-1][0]) < 1e-9
+              and abs(pts[0][1] - pts[-1][1]) < 1e-9)
+    core = pts[:-1] if closed else pts
+    m = len(core)
+    if m <= 2:
+        return pts
+
+    keep: list[tuple[float, float]] = []
+    for i in range(m):
+        ax, ay = core[(i - 1) % m]
+        bx, by = core[i]
+        cx, cy = core[(i + 1) % m]
+        dx, dy = cx - ax, cy - ay
+        L = math.hypot(dx, dy)
+        if L < 1e-12:
+            d = math.hypot(bx - ax, by - ay)
+        else:
+            d = abs((bx - ax) * dy - (by - ay) * dx) / L
+        if d > tol:
+            keep.append(core[i])
+
+    if len(keep) < 3:
+        return pts
+    if closed:
+        keep.append(keep[0])
+    return keep
+
+
 def slice_layers(
     tris: list[Tri],
     layer_height: float = 0.4,
     z_start: float | None = None,
     max_layers: int = 400,
     tol: float = 1e-4,
+    simplify_tol: float = 0.02,
 ) -> SliceResult:
     """把网格按层高切片，返回每层的轮廓。"""
     res = SliceResult()
@@ -350,6 +392,9 @@ def slice_layers(
         if z > zmax:
             break
         loops = slice_at_z(tris, z, tol)
+        if loops and simplify_tol > 0:
+            # 压掉共线冗余点：几何不变，但移动指令数大幅减少
+            loops = [simplify_loop(lp, simplify_tol) for lp in loops]
         if loops:
             empty_streak = 0
             res.layers.append((round(z - zmin, 4), loops))

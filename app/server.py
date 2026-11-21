@@ -31,7 +31,7 @@ from .geometry import (
     sort_paths,
     to_points,
 )
-from .model import IOEvent, Layer, Point, Process, Project, Source, Stroke
+from .model import DIALECTS, IOEvent, Layer, Point, Process, Project, Source, Stroke
 from .simulator import find_io_transitions, simulate
 
 
@@ -879,6 +879,9 @@ class JobReq(BaseModel):
     # 每包发几条。1=逐行一发一等（每行约 300ms 往返开销）
     # 4~6 能把开销摊薄到 50~75ms/行。0/None = 用默认
     batch_size: int = Field(6, ge=0, le=8)
+    # 目标方言。决定 G4 的 P 单位（H5 秒 / 其余毫秒）等，
+    # 影响下发器等待超时的计算。
+    dialect: str = Field("h5")
 
 
 @app.get("/api/link/mock/status")
@@ -959,7 +962,7 @@ def link_send_one(payload: dict):
             return {"ok": False, "message": msg}
     code, detail = link.ask(line, timeout=10.0)
     return {
-        "ok": code == "E000",
+        "ok": code in ("E000", "B000"),
         "code": code,
         "detail": detail,
         "message": f"{code} {detail}".strip() if code else "无回包（超时）",
@@ -976,7 +979,9 @@ def job_start(req: JobReq):
         if not ok:
             return {"ok": False, "message": msg}
     job = get_job(req.ip, req.port, batch_size=req.batch_size or 1)
-    ok, msg = job.start(req.gcode, delays=req.delays)
+    caps = DIALECTS.get(req.dialect)
+    dwell_unit = caps.dwell_unit if caps else "ms"
+    ok, msg = job.start(req.gcode, delays=req.delays, dwell_unit=dwell_unit)
     return {"ok": ok, "message": msg, "state": job.snapshot()}
 
 

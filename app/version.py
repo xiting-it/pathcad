@@ -40,7 +40,7 @@ LEGACY_NAMES = ("pathCAM", "pathcam", "pathcad")
 
 # ── 版本 ────────────────────────────────────────────────
 
-VERSION = "1.4.0-beta.1"
+VERSION = "1.4.0-beta.2"
 
 _SEMVER_RE = re.compile(
     r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"

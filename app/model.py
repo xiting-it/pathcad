@@ -163,11 +163,22 @@ class DialectCaps(BaseModel):
     max_line_len: int
     dwell_unit: Literal["ms", "s"]
     dwell: Literal["gcode", "host", "none"] = "gcode"
+    # IO 输出路数。超过这个数的通道号在下发前就报错，
+    # 不要等板子回 010（那样错误信息更难定位）。
+    io_channels: int = 8
+    # 结果码首字母。R7 全用 E；H5 是 G 行 E、纯 M 行 B。
+    # 留成列表是为了让下发器不必区分指令类型就能配对。
+    reply_letters: list[str] = ["E"]
 
 
 DIALECTS: dict[str, DialectCaps] = {
+    # R7 网口板：G4 会卡死队列，延时靠上位机 sleep
     "lc": DialectCaps(queued_io=True, arcs=False, max_line_len=128, dwell_unit="ms",
-                      dwell="host"),
+                      dwell="host", io_channels=8, reply_letters=["E"]),
+    # H5 网口板：G4 可用且单位是「秒」；IO 实测只有 4 路；
+    # 纯 M 行回 B 码、G 行回 E 码
+    "h5": DialectCaps(queued_io=True, arcs=False, max_line_len=128, dwell_unit="s",
+                      dwell="gcode", io_channels=4, reply_letters=["E", "B"]),
     "marlin": DialectCaps(queued_io=False, arcs=True, max_line_len=96, dwell_unit="ms",
                           dwell="gcode"),
     "klipper": DialectCaps(queued_io=True, arcs=True, max_line_len=0, dwell_unit="ms",

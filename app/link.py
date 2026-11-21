@@ -43,6 +43,21 @@ MAX_PACKET = 1472
 CR = chr(13)
 
 
+# 结果码首字母：R7 全用 E，H5 是 G 行 E、纯 M 行 B。
+# 下发器不区分指令类型，一律认这两个字母，配对逻辑不用改。
+REPLY_LETTERS = ("E", "B")
+
+
+def _is_result_code(text: str) -> bool:
+    """是不是最终结果码（如 E000 / B020）。"""
+    return len(text) == 4 and text[0] in REPLY_LETTERS and text[1:].isdigit()
+
+
+def _is_ok_code(code: str) -> bool:
+    """是不是成功码（E000 / B000）。"""
+    return code in ("E000", "B000")
+
+
 def _est_move_ms(line: str, cur_speed: float, accel: float = 300.0) -> float:
     """粗略估算一条运动指令的耗时（毫秒），用于模拟板。"""
     up = line.upper()
@@ -87,6 +102,10 @@ class MockState:
     port: int = DEFAULT_PORT
     queue: list = field(default_factory=list)  # [(line, finish_time)]
     pos: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # 回码风格：
+    #   "E"  所有行都回 E 码（旧 R7 网口板）
+    #   "EB" G 行回 E、纯 M 行回 B（H5，默认，与当前主力板一致）
+    reply_style: str = "EB"
     io_out: list[int] = field(default_factory=lambda: [0] * 8)
     io_events: list[tuple[float, int, int]] = field(default_factory=list)
     lines_done: int = 0
@@ -186,9 +205,10 @@ class MockBoard:
             if not line:
                 continue
             code, finish = self._exec(line)
+            code = self._fmt_code(line, code)
             detail = self._detail(line, code)
             results.append((code, finish, detail))
-            if code != "E000":
+            if not (code == "E000" or code == "B000"):
                 log.warn(SRC_MOCK, f"→ {code}  {line[:40]}")
 
         with self.state.lock:
@@ -221,7 +241,7 @@ class MockBoard:
         ⚠️ 不要在这里拿 self.state.lock：调用链 _handle 已经持有它，
         Python 的 Lock 不可重入，会直接死锁（表现为板子永不回包）。
         """
-        if code != "E000":
+        if not (code == "E000" or code == "B000"):
             return ""
         up = line.upper()
         pos = self.state.pos
@@ -250,6 +270,24 @@ class MockBoard:
             self.sock.sendto((text + "\r").encode("utf-8"), addr)
         except OSError:
             pass
+
+    def _fmt_code(self, line: str, code: str) -> str:
+        """把 E 码换成实际该回的首字母。
+
+        H5 的规则：含 G 字的行回 E，纯 M 行回 B，两者共用同一张状态码表。
+        R7 一律回 E。
+        """
+        if self.state.reply_style != "EB":
+            return code
+        if not code or code[0] != "E" or len(code) < 4:
+            return code
+        up = line.upper()
+        has_g = "G" in up.split()[0] if up.split() else False
+        has_m = any(t.startswith("M") and t[1:2].isdigit() for t in up.split())
+        # 有 G → E；无 G 且有 M → B
+        if not has_g and has_m:
+            return "B" + code[1:]
+        return code
 
     def _exec(self, line: str) -> tuple[str, float]:
         """执行一行，返回 (E码, 预计完成时刻)。"""
@@ -318,11 +356,17 @@ class MockBoard:
             return ("E000", finish)
 
         if up.startswith("G4"):
+            # ⚠️ P 的单位随板子不同：
+            #   H5（reply_style="EB"）→ 秒，P0.12 = 120ms
+            #   R7 / Marlin        → 毫秒，P120 = 120ms
+            # 之前一律按毫秒算，模拟 H5 时延时会差 1000 倍。
+            p_is_seconds = self.state.reply_style == "EB"
             ms = 0.0
             for tok in up.split():
                 try:
                     if tok.startswith("P"):
-                        ms = float(tok[1:])
+                        v = float(tok[1:])
+                        ms = v * 1000.0 if p_is_seconds else v
                     elif tok.startswith("S"):
                         ms = float(tok[1:]) * 1000
                 except ValueError:
@@ -440,7 +484,7 @@ class BoardLink:
             log.info(SRC_UDP_TX, f"建立 UDP 套接字 → {self.ip}:{self.port}")
             # 用 M114 探活
             code, detail = self.ask("M114", timeout=2.0)
-            if code == "E000":
+            if code == "E000" or code == "B000":
                 msg = f"已连接 {self.ip}:{self.port}（{detail or 'ok'}）"
                 log.info(SRC_UDP_RX, msg)
                 return True, msg
@@ -501,9 +545,9 @@ class BoardLink:
                 p = part.strip()
                 if not p:
                     continue
-                if len(p) == 4 and p[0] == "E" and p[1:].isdigit():
+                if _is_result_code(p):
                     hit = p
-                    if p == "E000":
+                    if _is_ok_code(p):
                         self.ok += 1
                     else:
                         self.failed += 1
@@ -577,10 +621,10 @@ class BoardLink:
                 p = part.strip()
                 if not p:
                     continue
-                if len(p) == 4 and p[0] == "E" and p[1:].isdigit():
+                if _is_result_code(p):
                     results.append((p, detail))
                     detail = ""
-                    if p == "E000":
+                    if _is_ok_code(p):
                         self.ok += 1
                     else:
                         self.failed += 1
@@ -599,7 +643,7 @@ class BoardLink:
             results.append(("", ""))
             self.failed += 1
 
-        bad = [(i, c) for i, (c, _) in enumerate(results) if c != "E000"]
+        bad = [(i, c) for i, (c, _) in enumerate(results) if not (c == "E000" or c == "B000")]
         if bad:
             log.warn(SRC_UDP_RX,
                      f"批量 {len(lines)} 条中有 {len(bad)} 条异常："
@@ -664,7 +708,8 @@ class JobRunner:
         self.batch_size = max(1, min(8, batch_size))
 
     def start(self, gcode: str, *, skip_comments: bool = True,
-              delays: list[float] | None = None) -> tuple[bool, str]:
+              delays: list[float] | None = None,
+              dwell_unit: str = "ms") -> tuple[bool, str]:
         """开始发送。
 
         delays 是「每行之后上位机要等多少秒」，来自编译器在 dwell="host"
@@ -672,6 +717,10 @@ class JobRunner:
         """
         if self.state.running:
             return False, "已经在发送了"
+
+        # G4 的 P 单位随板子不同（H5 秒 / R7-Marlin 毫秒），
+        # 计算等待超时时必须知道是哪一种，否则 G4 P10 会在 5 秒就误判超时。
+        self._dwell_unit = dwell_unit
 
         raw_lines = gcode.splitlines()
         lines: list[str] = []
@@ -739,8 +788,10 @@ class JobRunner:
                 up = win[0].upper()
                 if up.startswith("G4"):
                     try:
-                        ms = float(up.split("P")[1].split()[0])
-                        timeout = max(5.0, ms / 1000.0 + 5)
+                        val = float(up.split("P")[1].split()[0])
+                        unit = getattr(self, "_dwell_unit", "ms")
+                        sec = val if unit == "s" else val / 1000.0
+                        timeout = max(5.0, sec + 5)
                     except Exception:
                         pass
                 results = [self.link.ask(win[0], timeout=timeout)]
@@ -748,7 +799,7 @@ class JobRunner:
                 results = self.link.ask_many(win, timeout=15.0, per_line_extra=1.5)
 
             # ── 判定这一窗 ──
-            failed = [(k, c) for k, (c, _) in enumerate(results) if c != "E000"]
+            failed = [(k, c) for k, (c, _) in enumerate(results) if not (c == "E000" or c == "B000")]
             if not failed:
                 st.done += len(win)
                 i = win_end
@@ -760,7 +811,7 @@ class JobRunner:
                         break
                     st.current = ln
                     c1, _ = self.link.ask(ln, timeout=60.0)
-                    if c1 == "E000":
+                    if (c1 == "E000" or c1 == "B000"):
                         st.done += 1
                     else:
                         st.errors += 1

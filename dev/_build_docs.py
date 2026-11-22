@@ -31,6 +31,7 @@ DOCS = [
     (ROOT / "docs" / "H5协议备忘.md", "7-H5协议备忘.html", "H5协议备忘"),
     (ROOT / "docs" / "版本管理与发布.md", "8-版本管理与发布.html", "版本管理与发布"),
     (ROOT / "docs" / "H5板调试手册.md", "9-H5板调试手册.html", "H5板调试手册"),
+    (ROOT / "docs" / "AI交接文档.md", "10-AI交接文档.html", "AI 交接文档"),
 ]
 
 
@@ -164,10 +165,12 @@ def main() -> None:
         "7-H5协议备忘.html": "H5 板协议，含官方文档与实际不符之处。面向开发。",
         "8-版本管理与发布.html": "SemVer 规则、发版流程、提交规范、CHANGELOG 维护。",
         "9-H5板调试手册.html": "接线、首次上电流程、逐轴验证、故障对照表、禁止事项。",
+        "10-AI交接文档.html": "项目现状、代码地图、红线、硬件真相、已知的坑、下一步优先级。",
+
     }
     index.append("<h2 style='color:#8b95a5;font-size:15px;margin:26px 0 8px'>使用文档</h2>")
     for _, out_name, title in DOCS:
-        if out_name.startswith(("6-", "7-", "8-", "9-")):
+        if out_name.startswith(("10-", "6-", "7-", "8-", "9-")):
             continue
         if (OUT / out_name).exists():
             index.append(
@@ -176,7 +179,7 @@ def main() -> None:
             )
     index.append("<h2 style='color:#8b95a5;font-size:15px;margin:26px 0 8px'>开发文档</h2>")
     for _, out_name, title in DOCS:
-        if not out_name.startswith(("6-", "7-", "8-", "9-")):
+        if not out_name.startswith(("10-", "6-", "7-", "8-", "9-")):
             continue
         if (OUT / out_name).exists():
             index.append(

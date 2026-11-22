@@ -2508,6 +2508,7 @@ let _hmTimer = null;
 
 async function openHoming() {
   $('homingBox').classList.remove('hidden');
+  refreshHmCmd();
   setHmStatus('正在读原点开关…', '');
   try {
     const r = await apiGet('/api/homing/org');
@@ -2530,6 +2531,17 @@ function paintOrg(bits) {
     const em = el.querySelector('em');
     if (em) em.textContent = on ? '到位' : '未到位';
   });
+}
+
+/** 把当前勾选的轴拼成 G28 指令，实时显示给用户核对 */
+function refreshHmCmd() {
+  const axes = [];
+  if ($('hmX').checked) axes.push('X');
+  if ($('hmY').checked) axes.push('Y');
+  if ($('hmZ').checked) axes.push('Z');
+  if ($('hmE').checked) axes.push('E');
+  const el = $('hmCmd');
+  if (el) el.textContent = axes.length ? 'G28 ' + axes.join(' ') : '（没选轴）';
 }
 
 function setHmStatus(text, cls) {
@@ -2590,6 +2602,13 @@ async function startHoming() {
     if (okAll) toast('回原点完成');
   }, 800);
 }
+
+['hmX', 'hmY', 'hmZ', 'hmE'].forEach(id => {
+  $(id)?.addEventListener('change', refreshHmCmd);
+});
+
+// 机器状态页的快捷入口（仍然走确认框，不直接发）
+$('btnQuickHome')?.addEventListener('click', () => openHoming());
 
 $('btnHomingClose')?.addEventListener('click', closeHoming);
 $('btnHomingStart')?.addEventListener('click', startHoming);

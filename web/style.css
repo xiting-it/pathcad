@@ -962,3 +962,22 @@ input[type=range]::-webkit-slider-thumb:active { cursor: grabbing; transform: sc
 .hmStatus.running { color: #e0a33e; border-color: rgba(224,163,62,.4); }
 .hmStatus.ok { color: #90d19a; border-color: rgba(144,209,154,.4); }
 .hmStatus.err { color: #ff7a7a; border-color: rgba(255,122,122,.4); }
+
+/* 快捷操作里的危险项 */
+.tinyBtn.warnBtn {
+  color: #e0a33e;
+  border-color: rgba(224,163,62,.35);
+}
+.tinyBtn.warnBtn:hover { background: rgba(224,163,62,.12); }
+
+/* 回原点：将发送的指令预览 */
+.hmCmdRow {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px; font-size: 11px;
+}
+.hmCmd {
+  flex: 1; padding: 5px 8px; border-radius: 5px;
+  background: #10151b; border: 1px solid var(--line);
+  color: #8fc4ff; font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+}

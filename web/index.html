@@ -298,6 +298,7 @@
             <button class="tinyBtn" data-io="M121 V0">全关</button>
             <button class="tinyBtn" data-io="M121 V255">全开</button>
             <button class="tinyBtn" data-io="M114">查坐标</button>
+            <button class="tinyBtn warnBtn" id="btnQuickHome">回原点</button>
           </div>
         </div>
 
@@ -859,6 +860,11 @@
         <li>电机会一直往负方向找原点，<b>最长可能走 60 秒</b></li>
         <li>如果开关没接，电机会顶到机械限位持续堵转，<b>几分钟就能烧毁电机</b></li>
       </ul>
+    </div>
+
+    <div class="hmCmdRow">
+      <span class="muted xs">将发送</span>
+      <code id="hmCmd" class="hmCmd">G28 X Y Z</code>
     </div>
 
     <div id="hmStatus" class="hmStatus">空闲</div>

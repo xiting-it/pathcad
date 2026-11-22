@@ -978,7 +978,17 @@ def link_send_one(payload: dict):
         ok, msg = link.open()
         if not ok:
             return {"ok": False, "message": msg}
-    code, detail = link.ask(line, timeout=10.0)
+
+    # nonblock：界面轮询用。板子正被任务占用时立刻返回 busy，不排队等锁，
+    # 否则轮询请求会越积越多。
+    if payload.get("nonblock"):
+        code, detail = link.try_ask(line, timeout=3.0)
+        if code == "busy":
+            return {"ok": False, "busy": True, "code": "", "detail": "",
+                    "message": "板子忙（任务发送中），跳过这次轮询"}
+    else:
+        code, detail = link.ask(line, timeout=10.0)
+
     return {
         "ok": code in ("E000", "B000"),
         "code": code,

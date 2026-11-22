@@ -1525,6 +1525,17 @@ document.querySelectorAll('.vtab').forEach(b => b.addEventListener('click', () =
 
 document.querySelectorAll('.btab').forEach(b => {
   b.addEventListener('click', () => {
+    const bar = document.querySelector('.bottom');
+    const sameTab = b.classList.contains('active');
+
+    // 已经开着、又点了同一个标签 → 收起
+    if (sameTab && bar.classList.contains('open') && !bar.classList.contains('max')) {
+      closeBottom();
+      return;
+    }
+
+    bar.classList.add('open');
+    bar.classList.remove('max');
     document.querySelectorAll('.btab').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
     S.bview = b.dataset.bview;
@@ -1538,9 +1549,16 @@ document.querySelectorAll('.btab').forEach(b => {
       LOGS.renderAll();
       if (LOGS.pinned) LOGS.scrollToBottom();
     }
-    drawBottom();
+    requestAnimationFrame(() => { drawBottom(); resizeAll(); });
   });
 });
+
+/** 收起底部面板，只留标签栏 */
+function closeBottom() {
+  const bar = document.querySelector('.bottom');
+  bar.classList.remove('open', 'max');
+  requestAnimationFrame(() => resizeAll());
+}
 
 function update3DLayerSlider() {
   const c = S.lastCompile;
@@ -1661,9 +1679,16 @@ $('optPoints')?.addEventListener('input', e => {
 });
 $('btnBottomExpand')?.addEventListener('click', () => {
   const b = document.querySelector('.bottom');
-  b.classList.toggle('expanded');
-  requestAnimationFrame(() => { resizeAll(); });
+  if (!b.classList.contains('open') && !b.classList.contains('max')) {
+    // 本来收着，点放大直接打开到半屏
+    b.classList.add('open');
+  } else {
+    b.classList.toggle('max');
+  }
+  requestAnimationFrame(() => { drawBottom(); resizeAll(); });
 });
+
+$('btnBottomClose')?.addEventListener('click', closeBottom);
 
 $('btnSelectAll').addEventListener('click', selectAllStrokes);
 $('btnToggleLogs').addEventListener('click', toggleLogs);
@@ -2506,7 +2531,14 @@ $('machineBox')?.addEventListener('click', (e) => {
 
 let _hmTimer = null;
 
-async function openHoming() {
+async function openHoming(preset) {
+  // preset: ['X'] / ['X','Y','Z','E'] / undefined（保持上次勾选）
+  if (preset) {
+    for (const ax of ['X', 'Y', 'Z', 'E']) {
+      const el = $('hm' + ax);
+      if (el) el.checked = preset.includes(ax);
+    }
+  }
   $('homingBox').classList.remove('hidden');
   refreshHmCmd();
   setHmStatus('正在读原点开关…', '');
@@ -2607,8 +2639,35 @@ async function startHoming() {
   $(id)?.addEventListener('change', refreshHmCmd);
 });
 
-// 机器状态页的快捷入口（仍然走确认框，不直接发）
-$('btnQuickHome')?.addEventListener('click', () => openHoming());
+// ── 机器状态页的回源分裂按钮 ──
+// 主按钮 = 四轴全部回源；倒三角 = 展开单轴菜单
+// 都先走确认弹窗（里面能看到原点开关状态），不直接发指令
+const _homeMenu = () => $('homeMenu');
+
+$('btnHomeAll')?.addEventListener('click', () => {
+  _homeMenu()?.classList.add('hidden');
+  openHoming(['X', 'Y', 'Z', 'E']);
+});
+
+$('btnHomeCaret')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  _homeMenu()?.classList.toggle('hidden');
+});
+
+document.querySelectorAll('#homeMenu button[data-hm]').forEach(b => {
+  b.addEventListener('click', () => {
+    _homeMenu()?.classList.add('hidden');
+    const hm = b.dataset.hm;
+    openHoming(hm === 'ALL' ? ['X', 'Y', 'Z', 'E'] : [hm]);
+  });
+});
+
+// 点别处收起菜单
+document.addEventListener('click', (e) => {
+  const menu = _homeMenu();
+  if (!menu || menu.classList.contains('hidden')) return;
+  if (!e.target.closest('#homeSplit')) menu.classList.add('hidden');
+});
 
 $('btnHomingClose')?.addEventListener('click', closeHoming);
 $('btnHomingStart')?.addEventListener('click', startHoming);
@@ -3614,12 +3673,24 @@ bindSpacingPreset();
 // ① 机器状态页
 MACHINE = new MachineView({
   queryIO: async () => {
-    const r = await apiPost(`${apiBase()}/send-one`, { ...targetAddr(), line: 'M120' });
+    // nonblock：任务正在发送时不要排队等板子，直接跳过这次轮询
+    const r = await apiPost(`${apiBase()}/send-one`, {
+      ...targetAddr(), line: 'M120', nonblock: true,
+    });
     return r.raw || r.message || '';
   },
-  sendOne: async (line) => {
-    const r = await apiPost(`${apiBase()}/send-one`, { ...targetAddr(), line });
+  sendOne: async (line, opts) => {
+    const body = { ...targetAddr(), line };
+    if (opts && opts.nonblock) body.nonblock = true;
+    const r = await apiPost(`${apiBase()}/send-one`, body);
     return r.raw || r.message || '';
+  },
+  // 专用坐标查询：能区分「板子忙」和「真的读不到」
+  queryCoords: async () => {
+    const r = await apiPost(`${apiBase()}/send-one`, {
+      ...targetAddr(), line: 'M114', nonblock: true,
+    });
+    return { busy: !!r.busy, text: r.ok ? (r.raw || r.detail || '') : (r.busy ? '' : (r.message || '')) };
   },
 });
 

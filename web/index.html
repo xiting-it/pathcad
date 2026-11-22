@@ -272,6 +272,16 @@
             <span id="ioTimestamp" class="muted xs"></span>
           </div>
 
+          <div class="coordBar">
+            <span class="coordLabel">实时坐标</span>
+            <span class="coordItem"><em>X</em><b id="coordX">0.000</b></span>
+            <span class="coordItem"><em>Y</em><b id="coordY">0.000</b></span>
+            <span class="coordItem"><em>Z</em><b id="coordZ">0.000</b></span>
+            <span class="coordItem"><em>U</em><b id="coordU">0.000</b></span>
+            <span class="spacer"></span>
+            <span id="coordState" class="muted xs">未读取</span>
+          </div>
+
           <div class="ioGrid">
             <div class="ioGroup">
               <div class="ioGroupTitle">输出 IOOUT</div>
@@ -298,7 +308,18 @@
             <button class="tinyBtn" data-io="M121 V0">全关</button>
             <button class="tinyBtn" data-io="M121 V255">全开</button>
             <button class="tinyBtn" data-io="M114">查坐标</button>
-            <button class="tinyBtn warnBtn" id="btnQuickHome">回原点</button>
+            <div class="splitBtn" id="homeSplit">
+              <button class="tinyBtn warnBtn" id="btnHomeAll" title="四轴全部回源（先弹确认）">回源</button>
+              <button class="tinyBtn warnBtn splitCaret" id="btnHomeCaret" title="单独回某个轴">▾</button>
+              <div class="splitMenu hidden" id="homeMenu">
+                <button data-hm="X">X 轴回源</button>
+                <button data-hm="Y">Y 轴回源</button>
+                <button data-hm="Z">Z 轴回源</button>
+                <button data-hm="E">U 轴回源</button>
+                <div class="menuSep"></div>
+                <button data-hm="ALL">全部回源</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -381,7 +402,8 @@
         <button data-bview="gcode" class="btab">G-code</button>
         <button data-bview="logs" class="btab active">输出<span id="logBadge" class="logBadge hidden"></span></button>
         <div class="spacer"></div>
-        <button id="btnBottomExpand" class="tinyBtn" title="展开/收起输出面板">⤢</button>
+        <button id="btnBottomExpand" class="tinyBtn" title="放大 / 还原">⤢</button>
+        <button id="btnBottomClose" class="tinyBtn" title="收起面板">✕</button>
         <span id="simStats" class="badge dim">未生成</span>
       </div>
       <div class="bottomBody">

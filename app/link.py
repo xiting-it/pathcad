@@ -505,6 +505,9 @@ class BoardLink:
         self.sent = 0
         self.ok = 0
         self.failed = 0
+        # 一问一答必须串行：界面轮询（M114/M120）和手动指令/任务发送
+        # 共用同一个 socket，并发时 A 会收到 B 的回包（实测 G1 回过 B000）。
+        self._io_lock = threading.Lock()
 
     def open(self) -> tuple[bool, str]:
         try:
@@ -540,7 +543,32 @@ class BoardLink:
         self.sock = None
 
     def ask(self, line: str, timeout: float = 5.0) -> tuple[str, str]:
-        """发一行，等 E 码。返回 (E码, 详情文本)。超时返回 ('', '')。"""
+        """发一行，等结果码。返回 (码, 详情文本)。超时返回 ('', '')。
+
+        并发安全：内部加互斥锁。界面轮询和任务发送都会走这里，
+        不加锁的话两个线程的收发会交叉、回包错配。
+        """
+        if not self.sock:
+            return "", "未连接"
+        with self._io_lock:
+            return self._ask_locked(line, timeout)
+
+    def try_ask(self, line: str, timeout: float = 2.0) -> tuple[str, str]:
+        """尽力发一次：拿不到锁就立刻返回 ('busy', '')，不排队。
+
+        给界面轮询用 —— 任务正在发送时，轮询不该卡在那里等锁。
+        """
+        if not self.sock:
+            return "", "未连接"
+        if not self._io_lock.acquire(blocking=False):
+            return "busy", ""
+        try:
+            return self._ask_locked(line, timeout)
+        finally:
+            self._io_lock.release()
+
+    def _ask_locked(self, line: str, timeout: float = 5.0) -> tuple[str, str]:
+        """实际收发。调用方必须已持有 _io_lock。"""
         if not self.sock:
             return "", "未连接"
         if len(line) > MAX_LINE:
@@ -598,6 +626,17 @@ class BoardLink:
     # ── 批量发送 ────────────────────────────────────────
 
     def ask_many(
+        self,
+        lines: list[str],
+        timeout: float = 5.0,
+        per_line_extra: float = 1.0,
+    ) -> list[tuple[str, str]]:
+        if not self.sock:
+            return [("", "未连接")] * len(lines)
+        with self._io_lock:
+            return self._ask_many_locked(lines, timeout, per_line_extra)
+
+    def _ask_many_locked(
         self,
         lines: list[str],
         timeout: float = 5.0,

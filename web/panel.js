@@ -190,6 +190,11 @@ export class MachineView {
       logBody: document.getElementById('machineLogBody'),
       btnPoll: document.getElementById('btnPollIO'),
       chkAuto: document.getElementById('chkAutoPoll'),
+      cx: document.getElementById('coordX'),
+      cy: document.getElementById('coordY'),
+      cz: document.getElementById('coordZ'),
+      cu: document.getElementById('coordU'),
+      cstate: document.getElementById('coordState'),
     };
     if (!this.el.view) return;
 
@@ -235,14 +240,72 @@ export class MachineView {
     }
   }
 
-  /** 读一次 M120 */
+  /** 读一次 M120 + M114（坐标） */
   async poll() {
     try {
       const r = await this.host.queryIO();
-      this.update(r);
-      this.log('RX', r);
+      // 板子正被任务占用时返回一句提示，不要当数据也不要刷日志
+      if (String(r).includes('板子忙')) {
+        if (this.el.stamp) this.el.stamp.textContent = '板子忙';
+      } else {
+        this.update(r);
+        this.log('RX', r);
+      }
     } catch (e) {
       this.log('ERR', `读取失败：${e.message}`);
+    }
+    await this.pollCoords(false);
+  }
+
+  /** 单独读一次坐标。轮询时 log=false，不刷屏 */
+  async pollCoords(log = true) {
+    try {
+      const r = await this.host.queryCoords();
+      if (r.busy) {
+        // 板子正被任务占用，保留上次数值，只改状态文字
+        if (this.el.cstate) this.el.cstate.textContent = '板子忙';
+        return;
+      }
+      if (log) this.log('RX', r.text || '(无回包)');
+      this.updateCoords(r.text);
+    } catch (e) {
+      if (this.el.cstate) this.el.cstate.textContent = '读取失败';
+    }
+  }
+
+  /** 从 M114 回包解析 X/Y/Z/E 并显示。位置行格式 `X:0.000 Y:0.000 ...` */
+  updateCoords(raw) {
+    if (!raw) {
+      if (this.el.cstate) this.el.cstate.textContent = '读不到坐标';
+      return;
+    }
+    const txt = String(raw);
+    const g = ax => {
+      // 用 [0-9.] 而不是 \d，避免字符串里的反斜杠被当成转义吃掉
+      const m = txt.match(new RegExp(ax + ':(-?[0-9.]+)'));
+      return m ? m[1] : null;
+    };
+    const pairs = [
+      [this.el.cx, g('X')],
+      [this.el.cy, g('Y')],
+      [this.el.cz, g('Z')],
+      [this.el.cu, g('E')],   // 板子第四轴叫 E，界面显示 U
+    ];
+    let any = false;
+    for (const [el, v] of pairs) {
+      if (!el || v === null) continue;
+      any = true;
+      const nv = Number(v).toFixed(3);
+      if (el.textContent !== nv) {
+        el.textContent = nv;
+        // 数字变了就闪一下蓝色，让"在动"看得见
+        el.classList.add('moved');
+        clearTimeout(el._t);
+        el._t = setTimeout(() => el.classList.remove('moved'), 260);
+      }
+    }
+    if (this.el.cstate) {
+      this.el.cstate.textContent = any ? '实时' : '解析失败';
     }
   }
 
@@ -324,6 +387,7 @@ export class MachineView {
 
   /** 切到本页时调用 */
   onShow() {
+    this.pollCoords(false);
     this.poll();
   }
 

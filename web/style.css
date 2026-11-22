@@ -405,11 +405,16 @@ input[type=range]::-webkit-slider-thumb:active { cursor: grabbing; transform: sc
 
 /* ══ 底部 ══ */
 .bottom {
-  height: 132px; border-top: 1px solid var(--line);
+  height: auto; border-top: 1px solid var(--line);
   display: flex; flex-direction: column;
-  flex-shrink: 0; transition: height .15s;
+  flex-shrink: 0; transition: height .18s;
 }
-.bottom.expanded { height: 42%; }
+/* 点开某个标签 → 半屏 */
+.bottom.open { height: 50%; }
+/* 放大 → 接近全屏 */
+.bottom.max { height: 88%; }
+/* 没收起时内容不占位 */
+.bottom:not(.open):not(.max) .bottomBody { display: none; }
 .bottomTabs {
   display: flex; align-items: center; gap: 2px;
   padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--line);
@@ -980,4 +985,56 @@ input[type=range]::-webkit-slider-thumb:active { cursor: grabbing; transform: sc
   background: #10151b; border: 1px solid var(--line);
   color: #8fc4ff; font-family: ui-monospace, Consolas, monospace;
   font-size: 11.5px;
+}
+
+
+/* ══ 机器状态：实时坐标 ══════════════════════════════ */
+.coordBar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; margin-bottom: 10px;
+  background: var(--panel2); border-radius: 7px;
+  border: 1px solid var(--line);
+}
+.coordLabel { font-size: 11px; color: var(--dim); letter-spacing: .4px; }
+.coordItem {
+  display: flex; align-items: baseline; gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.coordItem em {
+  font-style: normal; font-size: 10.5px; color: #6b7480;
+  width: 11px; text-align: center;
+}
+.coordItem b {
+  font-weight: 500; font-size: 13px; color: #c9d6e4;
+  font-family: ui-monospace, Consolas, monospace;
+  min-width: 62px; text-align: right;
+  transition: color .12s;
+}
+.coordItem b.moved { color: #4ea3ff; }
+
+/* ══ 分裂按钮（回源）═══════════════════════════════ */
+.splitBtn { position: relative; display: inline-flex; }
+.splitBtn > button:first-child {
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+}
+.splitCaret {
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  border-left: 1px solid rgba(224,163,62,.25);
+  padding-left: 5px; padding-right: 5px;
+}
+.splitMenu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
+  min-width: 132px; padding: 4px;
+  background: #171c23; border: 1px solid var(--line);
+  border-radius: 8px; box-shadow: 0 10px 28px rgba(0,0,0,.5);
+}
+.splitMenu.hidden { display: none; }
+.splitMenu button {
+  display: block; width: 100%; text-align: left;
+  background: transparent; border: none; padding: 6px 10px;
+  color: var(--fg); font-size: 12px; border-radius: 5px;
+}
+.splitMenu button:hover { background: var(--panel3); }
+.splitMenu .menuSep {
+  height: 1px; background: var(--line); margin: 4px 6px;
 }

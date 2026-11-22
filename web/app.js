@@ -103,7 +103,6 @@ function applyState(state) {
   syncProps();
   syncParamsFromProject();
   refreshShapeList();
-  updateNextStep();
   draw();
   if (S.view === '3d') draw3D();
 }
@@ -701,7 +700,6 @@ cv.addEventListener('mousedown', e => {
     }
     syncProps();
     refreshShapeList();
-    updateNextStep();
     draw();
   } else if (S.tool === 'fill') {
     // 油漆桶：点哪个形状就填哪个
@@ -944,7 +942,6 @@ function commitDraft() {
   syncProps();
   refreshShapeList();
   refreshSummary();
-  updateNextStep();
   draw();
   setStatus(`${shapeName}已添加`, 'ok');
 }
@@ -1034,7 +1031,6 @@ function refreshShapeList() {
       S.sel = st.id;
       syncProps();
       refreshShapeList();
-      updateNextStep();
       draw();
     };
     box.appendChild(el);
@@ -1051,7 +1047,6 @@ function deleteStroke(id) {
   syncProps();
   refreshShapeList();
   refreshSummary();
-  updateNextStep();
   draw();
   toast(`已删除 ${removed._name || '形状'}`);
 }
@@ -1478,45 +1473,6 @@ $('btnResetParams').addEventListener('click', () => {
 });
 
 // ══════════════════════════════════════════════════════════
-// 下一步引导
-// ══════════════════════════════════════════════════════════
-
-function updateNextStep() {
-  const L = S.project?.layers?.[0];
-  const n = L?.strokes?.length || 0;
-  const txt = $('nextStepText');
-  const btn = $('nextStepBtn');
-  btn.classList.add('hidden');
-  btn.onclick = null;
-
-  if (n === 0) {
-    txt.textContent = '先画一个形状：左边选「矩形」或「圆」，在画布上拖出来。';
-    return;
-  }
-  const hasFill = L.strokes.some(s => s.kind === 'fill');
-  const st = S.sel ? findStroke(S.sel) : null;
-
-  if (st && !hasFill) {
-    txt.textContent = '已选中形状。点「填充选中形状」，把内部填满打印线。';
-    btn.textContent = '填充它';
-    btn.classList.remove('hidden');
-    btn.onclick = () => $('btnFill').click();
-    return;
-  }
-  if (!S.lastCompile) {
-    txt.textContent = `有 ${n} 条路径了。点右上「生成 G-code」看成品效果。`;
-    btn.textContent = '生成 G-code';
-    btn.classList.remove('hidden');
-    btn.onclick = () => $('btnCompile').click();
-    return;
-  }
-  txt.textContent = '已生成。切到「3D 预览」看成品，或「仿真」看阀的开关时序。';
-  btn.textContent = '看 3D 效果';
-  btn.classList.remove('hidden');
-  btn.onclick = () => switchView('3d');
-}
-
-// ══════════════════════════════════════════════════════════
 // 视图切换
 // ══════════════════════════════════════════════════════════
 
@@ -1672,13 +1628,20 @@ window.addEventListener('keydown', e => {
   } else if (k === 'escape') {
     S.draft = null;
     S.sel = null;
-    syncProps(); refreshShapeList(); updateNextStep(); draw();
+    syncProps(); refreshShapeList(); draw();
   }
 });
 
 // ══════════════════════════════════════════════════════════
 // API
 // ══════════════════════════════════════════════════════════
+
+/** GET 请求（api() 只会 POST，别拿它去调 GET 接口） */
+async function apiGet(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
+  return r.json();
+}
 
 async function api(path, body) {
   const r = await fetch(path, {
@@ -1734,7 +1697,6 @@ $('btnCompile').addEventListener('click', async () => {
 
     setStatus(`已生成 ${st.strokes} 笔画`, 'ok');
     refreshSummary();
-    updateNextStep();
     drawBottom();
     simReset();
     updateSendBtn();
@@ -1799,7 +1761,6 @@ $('btnFill').addEventListener('click', async () => {
     setStatus(`填充 +${made.length} 条`, 'ok');
     refreshShapeList();
     refreshSummary();
-    updateNextStep();
     draw();
   } catch (e) {
     setStatus('填充失败', 'err');
@@ -1839,7 +1800,6 @@ $('btnFillAll').addEventListener('click', async () => {
     S.project = res.project;
     commit(`全层填充 +${res.added} 条`);
     refreshShapeList();
-    updateNextStep();
     draw();
 
     setStatus(`${res.layers_done} 层已填充`, 'ok');
@@ -1964,7 +1924,6 @@ $('btnLatticePreset').addEventListener('click', () => {
   toast(scaled
     ? '已套用格栅块参数，形状缩放到 8mm 见方（6 层 · 格栅 2mm）'
     : '已套用格栅块参数：格栅 2mm / 6 层');
-  updateNextStep();
 });
 
 // 记录用户手动改过间距，避免切换图案时被覆盖
@@ -2468,7 +2427,6 @@ function applyProject(p, { record = false, label = '载入工程' } = {}) {
   syncParamsFromProject();
   refreshShapeList();
   refreshSummary();
-  updateNextStep();
   fitView();
   drawBottom();
   $('simStats').textContent = '未生成';
@@ -2539,6 +2497,104 @@ $('btnMachineClose')?.addEventListener('click', closeMachineSettings);
 $('btnMachineSave')?.addEventListener('click', saveMachineSettings);
 $('machineBox')?.addEventListener('click', (e) => {
   if (e.target.id === 'machineBox') closeMachineSettings();
+});
+
+
+// ══════════════════════════════════════════════════════════
+// 回原点（回源）
+// ══════════════════════════════════════════════════════════
+
+let _hmTimer = null;
+
+async function openHoming() {
+  $('homingBox').classList.remove('hidden');
+  setHmStatus('正在读原点开关…', '');
+  try {
+    const r = await apiGet('/api/homing/org');
+    paintOrg(r.bits);
+    if (!r.ok) {
+      setHmStatus('读不到板子状态 —— 先确认已连接', 'err');
+    } else {
+      setHmStatus('空闲', '');
+    }
+  } catch (e) {
+    setHmStatus('读原点开关失败：' + e.message, 'err');
+  }
+}
+
+function paintOrg(bits) {
+  document.querySelectorAll('.orgChip').forEach(el => {
+    const ax = el.dataset.ax;
+    const on = !!(bits && bits[ax]);
+    el.classList.toggle('on', on);
+    const em = el.querySelector('em');
+    if (em) em.textContent = on ? '到位' : '未到位';
+  });
+}
+
+function setHmStatus(text, cls) {
+  const el = $('hmStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'hmStatus' + (cls ? ' ' + cls : '');
+}
+
+function closeHoming() {
+  if (_hmTimer) {
+    clearInterval(_hmTimer);
+    _hmTimer = null;
+  }
+  $('homingBox').classList.add('hidden');
+}
+
+async function startHoming() {
+  const axes = [];
+  if ($('hmX').checked) axes.push('X');
+  if ($('hmY').checked) axes.push('Y');
+  if ($('hmZ').checked) axes.push('Z');
+  if ($('hmE').checked) axes.push('E');
+  if (!axes.length) {
+    setHmStatus('至少选一个轴', 'err');
+    return;
+  }
+
+  $('btnHomingStart').disabled = true;
+  setHmStatus(`正在回原点：${axes.join(' ')} …（可能要十几秒到一分钟）`, 'running');
+
+  const r = await apiPost('/api/homing/start', { axes });
+  if (!r.ok) {
+    setHmStatus(r.message || '启动失败', 'err');
+    $('btnHomingStart').disabled = false;
+    return;
+  }
+
+  // 轮询状态
+  if (_hmTimer) clearInterval(_hmTimer);
+  _hmTimer = setInterval(async () => {
+    let st;
+    try {
+      st = await apiGet('/api/homing/status');
+    } catch {
+      return;
+    }
+    paintOrg(st.org_bits);
+    if (st.running) {
+      setHmStatus(`正在回原点… 已 ${st.elapsed.toFixed(0)} 秒`, 'running');
+      return;
+    }
+    clearInterval(_hmTimer);
+    _hmTimer = null;
+    $('btnHomingStart').disabled = false;
+    const okAll = st.code === 'E000' || st.code === 'B000';
+    setHmStatus(st.message || st.code, okAll ? 'ok' : 'err');
+    if (okAll) toast('回原点完成');
+  }, 800);
+}
+
+$('btnHomingClose')?.addEventListener('click', closeHoming);
+$('btnHomingStart')?.addEventListener('click', startHoming);
+$('homingBox')?.addEventListener('click', (e) => {
+  if (e.target.id === 'homingBox') closeHoming();
 });
 
 // ══════════════════════════════════════════════════════════
@@ -2725,7 +2781,6 @@ $('fileSvg').addEventListener('change', async e => {
 
     fitView();
     refreshShapeList();
-    updateNextStep();
     draw();
 
     setStatus(`SVG 导入 ${made.length} 条`, 'ok');
@@ -3196,6 +3251,7 @@ const ACTIONS = {
   manualBaby: () => window.open('/docs/宝宝级操作手册', '_blank'),
   about: () => showAbout(),
   machineSettings: () => openMachineSettings(),
+  homing: () => openHoming(),
 
   // 帮助
   shortcuts: () => showShortcuts(),

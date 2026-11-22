@@ -78,6 +78,7 @@
       <button data-act="probe">探活</button>
       <div class="menuSep"></div>
       <button data-act="machineSettings">机器设置…</button>
+      <button data-act="homing" class="dangerItem">回原点（回源）…</button>
       <div class="menuSep"></div>
       <button data-act="send">发送到机器</button>
       <button data-act="stopJob" class="dangerItem">中止发送</button>
@@ -454,12 +455,6 @@
       </div>
     </div>
 
-    <div id="nextStep" class="nextStep">
-      <div class="nextStepTitle">下一步</div>
-      <div id="nextStepText" class="nextStepText">画一个形状开始</div>
-      <button id="nextStepBtn" class="wide primary hidden"></button>
-    </div>
-
     <!-- 对象列表（可折叠） -->
     <details class="paramGroup" id="shapeListGroup">
       <summary>
@@ -825,6 +820,54 @@
   <span id="sbConn" class="sbConn">未连接</span>
   <span class="sbDiv"></span>
   <span id="sbVersion" class="sbVersion" title="点击查看版本信息">v—</span>
+</div>
+
+
+<!-- 回原点对话框 -->
+<div id="homingBox" class="aboutBox hidden">
+  <div class="aboutCard" style="width:460px">
+    <h2 style="margin-bottom:6px">回原点（回源）</h2>
+    <div class="ver" style="margin-bottom:14px">让电机回到机械零点</div>
+
+    <div class="msGroup">
+      <div class="msTitle">原点开关状态</div>
+      <div class="orgRow" id="orgRow">
+        <span class="orgChip" data-ax="X">X<em>—</em></span>
+        <span class="orgChip" data-ax="Y">Y<em>—</em></span>
+        <span class="orgChip" data-ax="Z">Z<em>—</em></span>
+        <span class="orgChip" data-ax="E">E<em>—</em></span>
+      </div>
+      <p class="paramHelp xs" style="margin:8px 0 0">
+        亮 = 开关正被压住（在原点）。全都暗着说明还没到原点，或者开关没接。
+      </p>
+    </div>
+
+    <div class="msGroup">
+      <div class="msTitle">要回哪些轴</div>
+      <div class="msChecks">
+        <label class="chk"><input id="hmX" type="checkbox" checked> X 轴</label>
+        <label class="chk"><input id="hmY" type="checkbox" checked> Y 轴</label>
+        <label class="chk"><input id="hmZ" type="checkbox" checked> Z 轴</label>
+        <label class="chk"><input id="hmE" type="checkbox"> E 轴</label>
+      </div>
+    </div>
+
+    <div class="warnBox">
+      <b>回原点前请确认：</b>
+      <ul>
+        <li>这台机器的原点开关已经接好、位置正确</li>
+        <li>电机会一直往负方向找原点，<b>最长可能走 60 秒</b></li>
+        <li>如果开关没接，电机会顶到机械限位持续堵转，<b>几分钟就能烧毁电机</b></li>
+      </ul>
+    </div>
+
+    <div id="hmStatus" class="hmStatus">空闲</div>
+
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button id="btnHomingStart" class="primary" style="flex:1">开始回原点</button>
+      <button id="btnHomingClose" style="flex:1">关闭</button>
+    </div>
+  </div>
 </div>
 
 <!-- 关于对话框 -->

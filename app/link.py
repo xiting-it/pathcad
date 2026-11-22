@@ -996,12 +996,142 @@ class JobRunner:
 
 
 # ══════════════════════════════════════════════════════════
+# 回原点（回源）
+# ══════════════════════════════════════════════════════════
+
+
+@dataclass
+class HomingState:
+    running: bool = False
+    done: bool = False
+    axes: list[str] = field(default_factory=list)
+    code: str = ""
+    message: str = "空闲"
+    io_org: int = 0          # 回原点前的原点开关位图
+    started_at: float = 0.0
+    finished_at: float = 0.0
+
+
+class HomingRunner:
+    """执行 G28 回原点。
+
+    ⚠️ **危险操作**：如果原点开关没接，`G28` 会让电机一直往负方向找原点，
+    直到固件 60 秒超时（`E013`）。这 60 秒里电机满电流堵转，足以烧毁绕组。
+
+    所以：
+      - 只在用户明确选择轴之后才发，绝不自动触发
+      - 发之前先读 `M120` 把原点开关状态显示出来，让用户自己判断
+      - 跑在独立线程里，HTTP 立即返回，前端轮询状态
+    """
+
+    def __init__(self, link: BoardLink, job: "JobRunner | None" = None):
+        self.link = link
+        self.job = job
+        self.state = HomingState()
+        self.thread: threading.Thread | None = None
+
+    def start(self, axes: list[str]) -> tuple[bool, str]:
+        if self.state.running:
+            return False, "正在回原点，请等它结束"
+        if self.job is not None and self.job.state.running:
+            return False, "任务正在发送，先中止任务再回原点"
+        if not self.link.sock:
+            return False, "还没连上板子"
+
+        clean = [a.upper() for a in axes if a.upper() in ("X", "Y", "Z", "E", "U")]
+        # 板子认 E 不认 U
+        clean = ["E" if a == "U" else a for a in clean]
+        clean = list(dict.fromkeys(clean))
+        if not clean:
+            return False, "没有选择任何轴"
+
+        self.state = HomingState(running=True, axes=clean,
+                                 started_at=time.time(),
+                                 message="正在回原点…")
+        self.thread = threading.Thread(target=self._run, args=(clean,), daemon=True)
+        self.thread.start()
+        return True, f"开始回原点：{' '.join(clean)}"
+
+    def _read_org(self) -> int:
+        """读 IOORG 位图（bit0~3 = X/Y/Z/E 的原点开关）。"""
+        code, detail = self.link.ask("M120", timeout=6.0)
+        if code not in ("E000", "B000"):
+            return 0
+        m = re.search(r"IOORG\s+0x([0-9A-Fa-f]{2})", detail or "")
+        return int(m.group(1), 16) if m else 0
+
+    def _run(self, axes: list[str]) -> None:
+        st = self.state
+        try:
+            # 先把队列里残留的命令跑完，避免回零和旧命令抢运动
+            if self.job is not None:
+                self.job.drain("回原点前排空")
+
+            st.io_org = self._read_org()
+            st.message = "已发送 G28，等待回原点完成…"
+
+            # 只写字母表示只回这些轴；写全四个等于全回
+            cmd = "G28 " + " ".join(axes)
+            # 单个轴找原点可能要几十秒，多轴串行更久，给足时间
+            code, detail = self.link.ask(cmd, timeout=max(90.0, 75.0 * len(axes)))
+            st.code = code or "超时"
+
+            if code in ("E000", "B000"):
+                st.message = "回原点完成"
+                log.info(SRC_JOB, f"回原点完成：{' '.join(axes)}")
+            elif code == "E013":
+                st.message = ("回原点超时：找不到原点信号。"
+                              "多半是原点开关没接或没压到——检查接线")
+                log.error(SRC_ERR, f"G28 超时：{' '.join(axes)}")
+            elif code == "E015":
+                st.message = ("回原点开关顺序不对：往负向找原点却先碰到正限位。"
+                              "检查原点/限位接线是否接反")
+                log.error(SRC_ERR, f"G28 开关顺序错：{' '.join(axes)}")
+            elif code == "E014":
+                st.message = "回原点时碰到了硬件限位，已停所有轴"
+                log.error(SRC_ERR, f"G28 撞限位：{' '.join(axes)}")
+            else:
+                st.message = f"回原点失败：{code or '无回包'} {detail[:60]}".strip()
+                log.error(SRC_ERR, st.message)
+        except Exception as e:                       # 线程里绝不能让异常逃出去
+            st.code = "异常"
+            st.message = f"回原点出错：{e}"
+            log.error(SRC_ERR, st.message)
+        finally:
+            st.running = False
+            st.done = True
+            st.finished_at = time.time()
+
+    def snapshot(self) -> dict:
+        st = self.state
+        elapsed = 0.0
+        if st.started_at:
+            elapsed = (st.finished_at or time.time()) - st.started_at
+        return {
+            "running": st.running,
+            "done": st.done,
+            "axes": st.axes,
+            "code": st.code,
+            "message": st.message,
+            "io_org": st.io_org,
+            "org_bits": {
+                "X": bool(st.io_org & 0x01),
+                "Y": bool(st.io_org & 0x02),
+                "Z": bool(st.io_org & 0x04),
+                "E": bool(st.io_org & 0x08),
+            },
+            "elapsed": round(elapsed, 1),
+        }
+
+
+# ══════════════════════════════════════════════════════════
 # 单例
 # ══════════════════════════════════════════════════════════
 
 _mock: MockBoard | None = None
 _link: BoardLink | None = None
 _job: JobRunner | None = None
+_homing: HomingRunner | None = None
 _lock = threading.Lock()
 
 
@@ -1015,13 +1145,14 @@ def get_mock() -> MockBoard:
 
 def get_link(ip: str = DEFAULT_IP, port: int = DEFAULT_PORT,
              batch_size: int | None = None) -> BoardLink:
-    global _link, _job
+    global _link, _job, _homing
     with _lock:
         if _link is None or _link.ip != ip or _link.port != port:
             if _link:
                 _link.close()
             _link = BoardLink(ip, port)
             _job = JobRunner(_link, batch_size=batch_size or 1)
+            _homing = HomingRunner(_link, _job)
         elif batch_size is not None and _job is not None:
             # 允许运行中调整窗口大小（不影响正在跑的任务，下次 start 生效）
             _job.batch_size = max(1, min(8, batch_size))
@@ -1032,3 +1163,8 @@ def get_job(ip: str = DEFAULT_IP, port: int = DEFAULT_PORT,
             batch_size: int | None = None) -> JobRunner:
     get_link(ip, port, batch_size)
     return _job  # type: ignore[return-value]
+
+
+def get_homing(ip: str = DEFAULT_IP, port: int = DEFAULT_PORT) -> HomingRunner:
+    get_link(ip, port)
+    return _homing  # type: ignore[return-value]

@@ -1019,5 +1019,66 @@ def job_status(ip: str = "192.168.0.102", port: int = 5000):
     return get_job(ip, port).snapshot()
 
 
+# ── 回原点（回源）───────────────────────────────────────
+
+
+class HomingReq(BaseModel):
+    # 要回原点的轴。空 = 四轴全回
+    axes: list[str] = Field(default_factory=list)
+    ip: str = Field("192.168.0.102")
+    port: int = Field(5000, gt=0, lt=65536)
+
+
+@app.get("/api/homing/status")
+def homing_status(ip: str = "192.168.0.102", port: int = 5000):
+    from .link import get_homing
+
+    return get_homing(ip, port).snapshot()
+
+
+@app.post("/api/homing/start")
+def homing_start(req: HomingReq):
+    from .link import get_homing, get_link
+
+    link = get_link(req.ip, req.port)
+    if not link.sock:
+        ok, msg = link.open()
+        if not ok:
+            return {"ok": False, "message": msg}
+
+    axes = req.axes or ["X", "Y", "Z", "E"]
+    homing = get_homing(req.ip, req.port)
+    ok, msg = homing.start(axes)
+    return {"ok": ok, "message": msg, "state": homing.snapshot()}
+
+
+@app.get("/api/homing/org")
+def homing_org(ip: str = "192.168.0.102", port: int = 5000):
+    """读原点开关当前状态，供界面在回原点前提示。"""
+    import re as _re
+
+    from .link import get_link
+
+    link = get_link(ip, port)
+    if not link.sock:
+        ok, _ = link.open()
+        if not ok:
+            return {"ok": False, "bits": None}
+    code, detail = link.ask("M120", timeout=6.0)
+    m = _re.search(r"IOORG\s+0x([0-9A-Fa-f]{2})", detail or "")
+    org = int(m.group(1), 16) if m else 0
+    return {
+        "ok": code in ("E000", "B000"),
+        "code": code,
+        "org": org,
+        "bits": {
+            "X": bool(org & 0x01),
+            "Y": bool(org & 0x02),
+            "Z": bool(org & 0x04),
+            "E": bool(org & 0x08),
+        },
+    }
+
+
 if WEB.exists():
     app.mount("/static", StaticFiles(directory=str(WEB)), name="static")

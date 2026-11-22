@@ -429,17 +429,6 @@ input[type=range]::-webkit-slider-thumb:active { cursor: grabbing; transform: sc
 }
 
 /* ══ 右侧引导 ══ */
-.nextStep {
-  background: linear-gradient(135deg, rgba(78,163,255,.13), rgba(78,163,255,.04));
-  border: 1px solid rgba(78,163,255,.35);
-  border-radius: 8px; padding: 12px;
-}
-.nextStepTitle {
-  font-size: 10.5px; text-transform: uppercase; letter-spacing: .9px;
-  color: var(--accent); font-weight: 700; margin-bottom: 6px;
-}
-.nextStepText { font-size: 12.5px; line-height: 1.6; color: var(--fg); }
-.nextStep button { margin-top: 10px; padding: 7px; font-size: 12px; }
 
 .ioCard {
   background: var(--panel2); border-radius: 7px;
@@ -945,3 +934,31 @@ input[type=range]::-webkit-slider-thumb:active { cursor: grabbing; transform: sc
 .msChecks { display: flex; flex-wrap: wrap; gap: 6px 18px; }
 .msGroup .row { margin-bottom: 6px; }
 .msGroup .row label { width: 60px; }
+
+/* ── 回原点对话框 ─────────────────────────────────── */
+.orgRow { display: flex; gap: 8px; }
+.orgChip {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 0; border-radius: 7px; font-size: 12px;
+  background: #10151b; border: 1px solid var(--line); color: #6b7480;
+}
+.orgChip em { font-style: normal; font-size: 11px; color: #4a525e; }
+.orgChip.on {
+  background: rgba(78,163,255,.14); border-color: rgba(78,163,255,.5); color: #8fc4ff;
+}
+.orgChip.on em { color: #4ea3ff; }
+.warnBox {
+  background: rgba(224,120,60,.09); border: 1px solid rgba(224,120,60,.3);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;
+  font-size: 11.5px; line-height: 1.65; color: #d8b48c;
+}
+.warnBox b { color: #e0a33e; }
+.warnBox ul { margin: 6px 0 0; padding-left: 16px; }
+.warnBox li { margin-bottom: 3px; }
+.hmStatus {
+  font-size: 12px; color: #8b95a5; text-align: center;
+  padding: 8px; background: #10151b; border-radius: 7px; border: 1px solid var(--line);
+}
+.hmStatus.running { color: #e0a33e; border-color: rgba(224,163,62,.4); }
+.hmStatus.ok { color: #90d19a; border-color: rgba(144,209,154,.4); }
+.hmStatus.err { color: #ff7a7a; border-color: rgba(255,122,122,.4); }
